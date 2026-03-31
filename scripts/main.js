@@ -1,3 +1,4 @@
+
 let adapter, device;
 let gpuInfo = false;
 
@@ -108,7 +109,6 @@ texture-formats-tier1: ${textureTier1}
 
   storage.gridPoints0 = new2dTexture("gridPoints0", gridVertexCount, `rg32float`, true);
   storage.gridPoints1 = new2dTexture("gridPoints1", gridVertexCount, `rg32float`, true);
-  storage.gridArea = new2dTexture("gridArea", simulationDomain, `r32float`);
   storage.gridBoundaries = new2dTexture("gridBoundaries", gridVertexCount, `rg16sint`, true);
 
   storage.state0 = new2dTexture("state0", totalCellCount, `rgba32float`, true);
@@ -180,22 +180,15 @@ texture-formats-tier1: ${textureTier1}
     gridEllipticPoissonBindGroup(storage.gridPoints0, storage.gridPoints1),
   ];
 
-  const gridFinalizeComputePipeline = newComputePipeline(gridFinalizeShaderCode, "grid finalize");
-  const gridFinalizeBindGroup = (tex) => device.createBindGroup({
-    layout: gridFinalizeComputePipeline.getBindGroupLayout(0),
+  const stateInitComputePipeline = newComputePipeline(stateInitShaderCode, "state init");
+  const stateInitBindGroup = device.createBindGroup({
+    layout: stateInitComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: tex.createView() },
-      { binding: 2, resource: storage.gridArea.createView() },
-      { binding: 3, resource: storage.gridBoundaries.createView() },
-      { binding: 4, resource: storage.state0.createView() },
+      { binding: 1, resource: storage.state0.createView() },
     ],
-    label: "grid finalize compute bind group"
+    label: "state init compute bind group"
   });
-  const gridFinalizeBindGroups = [
-    gridFinalizeBindGroup(storage.gridPoints1),
-    gridFinalizeBindGroup(storage.gridPoints0),
-  ];
 
   const boundaryComputePipeline = newComputePipeline(boundaryShaderCode, "boundary condition");
   const boundaryBindGroup = (stateIn, stateOut) => device.createBindGroup({
@@ -256,11 +249,10 @@ texture-formats-tier1: ${textureTier1}
     layout: residualComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.gridArea.createView() },
-      { binding: 2, resource: storage.fluxX.createView() },
-      { binding: 3, resource: storage.fluxY.createView() },
-      { binding: 4, resource: storage.residual.createView() },
-      { binding: 5, resource: storage.gridPoints0.createView() },
+      { binding: 1, resource: storage.fluxX.createView() },
+      { binding: 2, resource: storage.fluxY.createView() },
+      { binding: 3, resource: storage.residual.createView() },
+      { binding: 4, resource: storage.gridPoints0.createView() },
     ],
     label: "residual compute bind group"
   });
@@ -321,8 +313,8 @@ texture-formats-tier1: ${textureTier1}
     addressModeV: "clamp-to-edge",
   });
   const gridSampler = device.createSampler({
-    magFilter: "nearest",
-    minFilter: "nearest",
+    magFilter: "linear",//"nearest",
+    minFilter: "linear",//"nearest",
     addressModeU: "repeat",
     addressModeV: "clamp-to-edge",
   })
@@ -364,15 +356,6 @@ texture-formats-tier1: ${textureTier1}
       {
         binding: 3,
         visibility: GPUShaderStage.FRAGMENT,
-        texture: {
-          sampleType: "float",
-          viewDimension: "2d",
-          multisampled: false,
-        },
-      },
-      {
-        binding: 4,
-        visibility: GPUShaderStage.FRAGMENT,
         sampler: {
           type: "filtering",
         }
@@ -406,10 +389,9 @@ texture-formats-tier1: ${textureTier1}
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: tex.createView() },
-      { binding: 2, resource: storage.gridArea.createView() },
-      { binding: 3, resource: storage.state2.createView() },
-      // { binding: 3, resource: storage.fluxX.createView() },
-      { binding: 4, resource: gridSampler },
+      { binding: 2, resource: storage.state2.createView() },
+      // { binding: 2, resource: storage.fluxX.createView() },
+      { binding: 3, resource: gridSampler },
     ],
   });
 
@@ -456,6 +438,10 @@ texture-formats-tier1: ${textureTier1}
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
+    actualInflowVel += (inflowVel - actualInflowVel) / velRampUpStrength;
+
+    uni.values.inflowV.set([actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]]);
+
     uni.update(device.queue);
 
     const encoder = device.createCommandEncoder();
@@ -481,7 +467,7 @@ texture-formats-tier1: ${textureTier1}
     }
     if (poissonIterations >= maxPoissonIterations && !gridFinalized) {
       gridFinalized = true;
-      createComputePass(encoder.beginComputePass(), gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], wgDispatchSize(simulationDomain));
+      createComputePass(encoder.beginComputePass(), stateInitComputePipeline, stateInitBindGroup, wgDispatchSize(simulationDomain));
       encoder.copyTextureToTexture(
         { texture: storage.state0 },
         { texture: storage.state1 },
@@ -547,6 +533,8 @@ texture-formats-tier1: ${textureTier1}
     // }
     renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime / 1e6 - renderTime) / filterStrength);
 
+    gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
+
     jsTime += (performance.now() - startTime - jsTime) / filterStrength;
 
     rafId = requestAnimationFrame(render);
@@ -570,4 +558,12 @@ uni.values.zoom.set([1.0]);
 uni.values.pan.set([0.0, 0.0]);
 uni.values.simDomain.set(simulationDomain);
 uni.values.dt.set([dt]);
+uni.values.inflowV.set([0, 0]);
+uni.values.gamma.set([gamma]);
+uni.values.K_p.set([K_p]);
+uni.values.K_u.set([K_u]);
+uni.values.inPressure.set([inPressure]);
+uni.values.inRho.set([inRho]);
+
+
 main()

@@ -112,14 +112,11 @@ fn main(
 
 // finalize grid by cell areas from grid points using jacobian and initialize state variables
 // run for each cell center
-const gridFinalizeShaderCode = /* wgsl */`
+const stateInitShaderCode = /* wgsl */`
 ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
-@group(0) @binding(1) var gridPoints: texture_2d<f32>; // rg32float
-@group(0) @binding(2) var gridArea: texture_storage_2d<r32float, write>;
-@group(0) @binding(3) var gridBoundaries: texture_2d<i32>; // rg16sint
-@group(0) @binding(4) var state: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(1) var state: texture_storage_2d<rgba32float, write>;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -128,25 +125,9 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  
-  let gamma = 1.4;
-  let inPressure = 1.0 / gamma;
-  let inRho = 1.0;
-
-  let boundary = textureLoad(gridBoundaries, gid.xy, 0).x;
-
-  let rightIdx = (gid.x + 1) % u32(uni.simDomain.x);
-  let a = textureLoad(gridPoints, gid.xy, 0).xy;
-  let b = textureLoad(gridPoints, vec2u(rightIdx, gid.y), 0).xy;
-  let c = textureLoad(gridPoints, vec2u(gid.x, gid.y + 1), 0).xy;
-  let d = textureLoad(gridPoints, vec2u(rightIdx, gid.y + 1), 0).xy;
-
-  let area = 0.5 * abs((d.x - a.x) * (c.y - b.y) - (c.x - b.x) * (d.y - a.y));
-  textureStore(gridArea, gid.xy, vec4f(area, 0.0, 0.0, 0.0));
-
   // initialize interior state to air at rest, leave rest to boundary shader
-  let rhoE = inPressure / (gamma - 1.0) + 0.5 * inRho * 0.0;
-  textureStore(state, gid.xy + vec2u(0, 1), vec4f(inRho, 0.0, 0.0, rhoE));
+  let rhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * uni.inRho * 0.0;
+  textureStore(state, gid.xy + vec2u(0, 1), vec4f(uni.inRho, 0.0, 0.0, rhoE));
 }
 `;
 
@@ -168,12 +149,6 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  // placeholder conditions
-  let AoA = 0.0; // rad
-  let inflowV = 3.0 * vec2f(cos(AoA), sin(AoA));
-  let gamma = 1.4;
-  let inPressure = 1.0 / gamma;
-  let inRho = 1.0;
 
   let simDomain = vec2u(uni.simDomain);
   let rightIdx = (gid.x + 1) % simDomain.x;
@@ -196,27 +171,26 @@ fn main(
     let rho_int = interiorState.x;
     let u_int = interiorState.yz / rho_int;
     let ghost_U = reflect(u_int, normal); // reflect velocity across normal
-    let P_int = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) * (gamma - 1.0);
-    let rhoE = P_int / (gamma - 1.0) + 0.5 * rho_int * dot(ghost_U, ghost_U);
-    ghostState = vec4f(rho_int, ghost_U * rho_int, rhoE); // reflect velocity, keep other states, apply new rhoE?
+    let rhoE = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) + 0.5 * rho_int * dot(ghost_U, ghost_U);
+    ghostState = vec4f(rho_int, ghost_U * rho_int, rhoE); // reflect velocity, keep other states, apply new rhoE
   } else if (gid.y > simDomain.y) {
     // handle outer boundary
     let interiorState = textureLoad(stateIn, vec2u(gid.x, simDomain.y), 0);
     let rho_int = interiorState.x;
     let u_int = interiorState.yz / rho_int;
     
-    let boundaryInOrOut = dot(normal, inflowV); // negative for inflow, positive for outflow
+    let boundaryInOrOut = dot(normal, uni.inflowV); // negative for inflow, positive for outflow
     if(boundaryInOrOut < 0.0) {
       // inflow
-      // rho * E = p / (gamma - 1) + 0.5 * rho * (u^2 + v^2)
-      let rhoE = inPressure / (gamma - 1.0) + 0.5 * inRho * dot(inflowV, inflowV);
-      ghostState = vec4f(inRho, inRho * inflowV.x, inRho * inflowV.y, rhoE); // rho, rho*u, rho*v, rho*E
+      // rho * E = p / (uni.gamma - 1) + 0.5 * rho * (u^2 + v^2)
+      let rhoE = uni.inPressure / ((uni.gamma - 1.0) * uni.inRho) + 0.5 * dot(uni.inflowV, uni.inflowV);
+      ghostState = uni.inRho * vec4f(1, uni.inflowV, rhoE); // rho, rho*u, rho*v, rho*E
     } else {
       // outflow
-      let P_int = (interiorState.w - 0.5 * dot(interiorState.yz, interiorState.yz) / rho_int) * (gamma - 1.0);
-      let a = sqrt(gamma * P_int / rho_int);
+      let P_int = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) * (uni.gamma - 1.0);
+      let a = sqrt(uni.gamma * P_int / rho_int);
       let M_int = length(u_int) / a;
-      let ambientRhoE = inPressure / (gamma - 1.0) + 0.5 * rho_int * dot(u_int, u_int); //dot(inflowV, inflowV)
+      let ambientRhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * rho_int * dot(u_int, u_int); //dot(uni.inflowV, uni.inflowV)
       ghostState = select(vec4f(interiorState.xyz, ambientRhoE), interiorState, M_int >= 1.0); // copy for M > 1.0, fix pressure to ambient for M < 1.0
       if (gid.y == simDomain.y + 2) {
         ghostState = 2.0 * ghostState - interiorState; // for 2nd order extrapolation in muscl
@@ -252,17 +226,17 @@ fn loadState(idx: vec2i) -> vec4f {
   return textureLoad(state, vec2u(index), 0);
 }
 
-fn toPrimitive(Q: vec4f, gamma: f32) -> vec4f {
+fn toPrimitive(Q: vec4f) -> vec4f {
   let rho = Q.x;
   let vel = Q.yz / rho;
-  let p   = max(1e-7, (Q.w - 0.5 * rho * dot(vel, vel)) * (gamma - 1.0));
+  let p   = max(1e-7, (Q.w - 0.5 * rho * dot(vel, vel)) * (uni.gamma - 1.0));
   return vec4f(rho, vel, p);
 }
 
-fn toConservative(W: vec4f, gamma: f32) -> vec4f {
+fn toConservative(W: vec4f) -> vec4f {
   let rho = W.x;
   let vel = W.yz;
-  let rhoE = W.w / (gamma - 1.0) + 0.5 * rho * dot(vel, vel);
+  let rhoE = W.w / (uni.gamma - 1.0) + 0.5 * rho * dot(vel, vel);
   return vec4f(rho, rho * vel, rhoE);
 }
 
@@ -294,27 +268,16 @@ fn P_5(M: f32, alpha: f32, plusOrMinus: i32) -> f32 {
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  let gid_i = vec2i(gid.xy);
-  let cellIdx = gid_i;
-  let simDomain = vec2u(uni.simDomain);
+  let cellIdx = vec2i(gid.xy);
   let boundary = textureLoad(gridBoundaries, gid.xy, 0).xy;
 
-  // placeholder conditions
-  let AoA = 0.0; // rad
-  let inflowV = 3.0 * vec2f(cos(AoA), sin(AoA));
-  let gamma = 1.4;
-  let inPressure = 1.0 / gamma;
-  let inRho = 1.0;
-  let K_p = 0.0;//25;
-  let K_u = 0.0;//75;
   let sigma = 1.0;
 
-  let M_inf2 = dot(inflowV, inflowV) / (gamma * inPressure / inRho);
+  let M_inf2 = dot(uni.inflowV, uni.inflowV) / (uni.gamma * uni.inPressure / uni.inRho);
 
   // load current face
-  let rightIdx = (gid.x + 1) % simDomain.x;
   let vtx1 = textureLoad(gridPoints, gid.xy, 0).xy;
-  let vtx2 = textureLoad(gridPoints, vec2u(${vertical ? "rightIdx, gid.y" : "gid.x, gid.y + 1"}), 0).xy;
+  let vtx2 = textureLoad(gridPoints, vec2u(${vertical ? "(gid.x + 1) % u32(uni.simDomain.x), gid.y" : "gid.x, gid.y + 1"}), 0).xy;
 
   // +Y/+X pointing normal
   let tangent = normalize(${vertical ? "vtx1 - vtx2" : "vtx2 - vtx1"});
@@ -339,12 +302,12 @@ fn main(
   // let Q_LMUSCL = Q_L;// + 0.5 * vanLeer_L * (Q_R - Q_L); //(Q_L - Q_L2);
   // let Q_RMUSCL = Q_R;// - 0.5 * vanLeer_R * (Q_R2 - Q_R); //(Q_R2 - Q_R);
 
-  let Q_Lprimitive = toPrimitive(Q_L, gamma); // rho, u, v, p
-  let Q_L2primitive = toPrimitive(Q_L2, gamma);
-  let Q_Rprimitive = toPrimitive(Q_R, gamma);
-  let Q_R2primitive = toPrimitive(Q_R2, gamma);
+  let Q_Lprimitive = toPrimitive(Q_L); // rho, u, v, p
+  let Q_L2primitive = toPrimitive(Q_L2);
+  let Q_Rprimitive = toPrimitive(Q_R);
+  let Q_R2primitive = toPrimitive(Q_R2);
 
-  // // MUSCL
+  // MUSCL
   let faceDiff = (Q_Rprimitive - Q_Lprimitive);
   let r_L = ((Q_Lprimitive - Q_L2primitive) * faceDiff + 1e-6) / (faceDiff * faceDiff + 1e-6);
   let r_R = ((Q_Rprimitive - Q_R2primitive) * faceDiff + 1e-6) / (faceDiff * faceDiff + 1e-6);
@@ -354,8 +317,8 @@ fn main(
   let Q_LMUSCLprimitive = Q_Lprimitive;// + 0.5 * vanLeer_L * (Q_Lprimitive - Q_L2primitive);
   let Q_RMUSCLprimitive = Q_Rprimitive;// - 0.5 * vanLeer_R * (Q_R2primitive - Q_Rprimitive);
 
-  let Q_LMUSCL = toConservative(Q_LMUSCLprimitive, gamma);
-  let Q_RMUSCL = toConservative(Q_RMUSCLprimitive, gamma);
+  let Q_LMUSCL = toConservative(Q_LMUSCLprimitive);
+  let Q_RMUSCL = toConservative(Q_RMUSCLprimitive);
 
   // interface states, with u = velocity normal to face
   // left state
@@ -363,8 +326,8 @@ fn main(
   let vel_L = Q_LMUSCL.yz / rho_L;
   let u_L = dot(vel_L, normal);
 
-  let p_L = (Q_LMUSCL.w - 0.5 * dot(vel_L, vel_L) * rho_L) * (gamma - 1.0);
-  let a_L = sqrt(gamma * max(p_L, 1e-7) / max(rho_L, 1e-7)); // sqrt(gamma * p_L / rho_L);
+  let p_L = (Q_LMUSCL.w - 0.5 * dot(vel_L, vel_L) * rho_L) * (uni.gamma - 1.0);
+  let a_L = sqrt(uni.gamma * p_L / rho_L);
   let h_L = (Q_LMUSCL.w + p_L) / rho_L;
 
   // right state
@@ -372,18 +335,18 @@ fn main(
   let vel_R = Q_RMUSCL.yz / rho_R;
   let u_R = dot(vel_R, normal);
 
-  let p_R = (Q_RMUSCL.w - 0.5 * dot(vel_R, vel_R) * rho_R) * (gamma - 1.0);
-  let a_R = sqrt(gamma * max(p_R, 1e-7) / max(rho_R, 1e-7)); // sqrt(gamma * p_R / rho_R);
+  let p_R = (Q_RMUSCL.w - 0.5 * dot(vel_R, vel_R) * rho_R) * (uni.gamma - 1.0);
+  let a_R = sqrt(uni.gamma * p_R / rho_R);
   let h_R = (Q_RMUSCL.w + p_R) / rho_R;
 
   // more accurate
-  // let h_t_interface = 0.5 * (h_L + h_R); // total enthalpy
-  // let aStar = sqrt(max(1e-6, 2 * (gamma - 1.0) / (gamma + 1) * h_t_interface)); // eq 29
-  // let aHat_L = aStar * aStar / max(u_L, aStar); // eq 30
-  // let aHat_R = aStar * aStar / max(-u_R, aStar);
-  // let a_interface = min(aHat_L, aHat_R); // eq 28
+  let h_t_interface = 0.5 * (h_L + h_R); // total enthalpy
+  let aStar = sqrt(max(1e-6, 2 * (uni.gamma - 1.0) / (uni.gamma + 1) * h_t_interface)); // eq 29
+  let aHat_L = aStar * aStar / max(u_L, aStar); // eq 30
+  let aHat_R = aStar * aStar / max(-u_R, aStar);
+  let a_interface = min(aHat_L, aHat_R); // eq 28
 
-  let a_interface = (a_L + a_R) / 2.0;
+  // let a_interface = (a_L + a_R) / 2.0;
   let M_L = u_L / a_interface; // eq 69
   let M_R = u_R / a_interface;
   let a_interface2 = a_interface * a_interface;
@@ -396,13 +359,13 @@ fn main(
   let alpha = 3.0 / 16.0 * (-4 + 5 * f_a * f_a); // eq 76
   let beta = 0.125; // 1/8, eq 76
 
-  let M_interface = M_4(M_L, beta, 1) + M_4(M_R, beta, -1) - K_p / f_a * max(1 - sigma * Mbar2, 0) * (p_R - p_L) / (rho_interface * a_interface2); // eq 73
+  let M_interface = M_4(M_L, beta, 1) + M_4(M_R, beta, -1) - uni.K_p / f_a * max(1 - sigma * Mbar2, 0) * (p_R - p_L) / (rho_interface * a_interface2); // eq 73
 
   let mdot = a_interface * M_interface * select(rho_R, rho_L, M_interface > 0); // eq 74
 
   let P_5plus = P_5(M_L, alpha, 1);
   let P_5minus = P_5(M_R, alpha, -1);
-  let P_interface = P_5plus * p_L + P_5minus * p_R - K_u * P_5plus * P_5minus * (rho_L + rho_R) * f_a * a_interface * (u_R - u_L); // eq 75
+  let P_interface = P_5plus * p_L + P_5minus * p_R - uni.K_u * P_5plus * P_5minus * (rho_L + rho_R) * f_a * a_interface * (u_R - u_L); // eq 75
 
   let phi_R = vec4f(1, vel_R, h_R); // eq 3
   let phi_L = vec4f(1, vel_L, h_L);
@@ -423,11 +386,10 @@ const residualShaderCode = /* wgsl */`
 ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
-@group(0) @binding(1) var gridArea: texture_2d<f32>;  // r32float
-@group(0) @binding(2) var xFlux: texture_2d<f32>; // rgba32float
-@group(0) @binding(3) var yFlux: texture_2d<f32>; // rgba32float
-@group(0) @binding(4) var residual: texture_storage_2d<rgba32float, write>; // rgba32float
-@group(0) @binding(5) var gridPoints: texture_2d<f32>; // rg32float
+@group(0) @binding(1) var xFlux: texture_2d<f32>; // rgba32float
+@group(0) @binding(2) var yFlux: texture_2d<f32>; // rgba32float
+@group(0) @binding(3) var residual: texture_storage_2d<rgba32float, write>; // rgba32float
+@group(0) @binding(4) var gridPoints: texture_2d<f32>; // rg32float
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -438,7 +400,6 @@ fn main(
 ) {
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let rightIdx = (gid.x + 1) % u32(uni.simDomain.x);
-  let area = textureLoad(gridArea, gid.xy, 0).x;
   let xF_left = textureLoad(xFlux, gid.xy, 0);
   let xF_right = textureLoad(xFlux, vec2u(rightIdx, gid.y), 0);
   let yF_up = textureLoad(yFlux, gid.xy + vec2u(0, 1), 0);
@@ -452,6 +413,8 @@ fn main(
   let rightFace = length(vtx2 - vtx4);
   let upFace = length(vtx3 - vtx4);
   let downFace = length(vtx1 - vtx2);
+
+  let area = 0.5 * abs((vtx4.x - vtx1.x) * (vtx3.y - vtx2.y) - (vtx3.x - vtx2.x) * (vtx4.y - vtx1.y));
 
   let dQdt = -(xF_right * rightFace - xF_left * leftFace + yF_up * upFace - yF_down * downFace) / area;
   textureStore(residual, gid.xy, dQdt);
@@ -541,11 +504,10 @@ fn main(
   let newQ = (Q + 2.0 * (Q2 + uni.dt * res)) / 3.0;
 
   // let dx = 
-  // let gamma = 1.4;
   // let rho = newQ.x;
   // let vel = length(Q2.yz / rho);
-  // let p = (newQ.w - 0.5 * dot(vel, vel) * rho) * (gamma - 1.0);
-  // let a = sqrt(gamma * max(p, 1e-7) / max(rho, 1e-7));
+  // let p = (newQ.w - 0.5 * dot(vel, vel) * rho) * (uni.gamma - 1.0);
+  // let a = sqrt(uni.gamma * max(p, 1e-7) / max(rho, 1e-7));
   // let cfl = dx / (vel + a);
   textureStore(stateOut, cellIdx, newQ);
 }
@@ -603,14 +565,13 @@ ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 @group(0) @binding(1) var gridPoints: texture_2d<f32>; // rg32float
-@group(0) @binding(2) var gridArea: texture_2d<f32>;   // r32float
-@group(0) @binding(3) var state: texture_2d<f32>;   // rgba32float
-@group(0) @binding(4) var gridSampler: sampler;
+@group(0) @binding(2) var state: texture_2d<f32>;   // rgba32float
+@group(0) @binding(3) var gridSampler: sampler;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) fragCoord: vec2f,
-  @location(1) @interpolate(flat) normal: vec2f,
+  // @location(1) @interpolate(flat) normal: vec2f,
 };
 
 fn vIdxToGridPosX(vIdx: u32) -> vec2u {
@@ -650,9 +611,6 @@ fn vIdxToLineStrip(vIdx: u32) -> vec2u {
 @vertex
 fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
   var out: VertexOut;
-  // let gridPos = vIdxToGridPosX(vIdx);
-  // let gridPos = vIdxToTriangleStrip(vIdx);
-  // let gridPos = vIdxToLineStrip(vIdx);
   var gridPos: vec2u;
   switch (u32(uni.gridDisplayMode)) {
     case 0: { gridPos = vIdxToTriangleStrip(vIdx); }
@@ -668,29 +626,27 @@ fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
   
   // let adjIdx = vec2u((gridPos.x + 1) % (u32(uni.simDomain.x)), gridPos.y);
   // let tangent = normalize(vtx - textureLoad(gridPoints, adjIdx, 0).xy);
-  let adjIdx = vec2u(gridPos.x, (gridPos.y + 1));
-  let tangent = normalize(textureLoad(gridPoints, adjIdx, 0).xy - vtx);
-  out.normal = vec2f(-tangent.y, tangent.x);
+  // let adjIdx = vec2u(gridPos.x, (gridPos.y + 1));
+  // let tangent = normalize(textureLoad(gridPoints, adjIdx, 0).xy - vtx);
+  // out.normal = vec2f(-tangent.y, tangent.x);
   return out;
 }
 
 @fragment
 fn fs(vtx: VertexOut) -> @location(0) vec4f {
   // sample sim state
-  let area = textureSample(gridArea, gridSampler, vtx.fragCoord).x;
   let state = textureSample(state, gridSampler, vtx.fragCoord);
-  // return vec4f(pow(area * 1.5e3, 0.4));
   // return vec4f(vtx.fragCoord, 1.0 - vtx.fragCoord.y, 1.0);
-  // return vec4f(abs(vtx.normal), dot(vtx.normal, vec2f(1.0, 0.0)) * 0.5 + 0.5, 1.0);// * pow(area * 1.5e3, 0.4);
+  // return vec4f(abs(vtx.normal), dot(vtx.normal, vec2f(1.0, 0.0)) * 0.5 + 0.5, 1.0);
   // return vec4f(abs(state.yz) / (state.x * 5.0), f32(any(state != state)), 0);
-  return abs(state / 10.0) + (f32(any(state != state)));
+  return abs(state / 10.0);
+  // return vec4f(state.x / 2.0);// - f32((state.x * 100.0 % 5.0 <= (0.1)));
 
   
-  // let gamma = 1.4;
   // let rho = state.x;
   // let vel = length(state.yz / rho);
-  // let p = (state.w - 0.5 * vel * vel * rho) * (gamma - 1.0);
-  // let a = sqrt(gamma * max(p, 1e-7) / max(rho, 1e-7));
+  // let p = (state.w - 0.5 * vel * vel * rho) * (uni.gamma - 1.0);
+  // let a = sqrt(uni.gamma * max(p, 1e-7) / max(rho, 1e-7));
   // return vec4f(vel / a, f32(any(state != state)), 0.0, 1.0);
 }
 `;

@@ -9,11 +9,13 @@ uni.addUniform("pan", "vec2f");
 uni.addUniform("zoom", "f32");
 uni.addUniform("dt", "f32");
 
-uni.addUniform("inVel", "vec2f");
+uni.addUniform("inflowV", "vec2f");
 uni.addUniform("inPressure", "f32");
 uni.addUniform("inRho", "f32");
 
 uni.addUniform("gamma", "f32");
+uni.addUniform("K_p", "f32");
+uni.addUniform("K_u", "f32");
 // uni.addUniform("inState", "vec4f");
 
 uni.addUniform("gridDisplayMode", "f32");
@@ -28,7 +30,6 @@ const storage = {
   // conformal structured grid 
   gridPoints0: null,      // rg32float (M+1)x(N+1)  xy points in clip space, derive normals and lengths from this
   gridPoints1: null,      //                        same as above, used for ping-ponging during iterative Poisson solve
-  gridArea: null,         // r32float  (M)x(N)      area of each cell, Jacobian of transformation from world to grid space
   gridBoundaries: null,   // r32sint   (M+1)x(N+1)  boundary conditions and indices of connections between nonadjacent cells for each vertex
                           //                        positive: index of connected cell, otherwise: type of boundary (-1: object, -2: domain outer boundary (derive inflow and outflow from normal direction))//-2: inlet, -4: outlet)
                           // replace with linear indices for 4 sides if no boundaries inside domain?
@@ -52,10 +53,21 @@ let dt = 1e-4;
 let oldDt;
 let stepsPerFrame = 100;
 
+let inflowVel = 3.8;
+let actualInflowVel = 0;
+let velRampUpStrength = 50;
+let AoA = 0;
+let xyAoA = [1, 0];
+let gamma = 1.4;
+let inPressure = 1.0 / gamma;
+let inRho = 1.0;
+let K_p = 0;//.25;
+let K_u = 0;//.75;
+
 
 const canvas = document.getElementById("canvas");
 
-const gui = new GUI("fluid sim", canvas);
+const gui = new GUI("AUSM+-up compressible fluid sim", canvas);
 
 gui.addGroup("perf", "Performance");
 gui.addStringOutput("res", "Resolution", "", "perf");
@@ -70,7 +82,36 @@ gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfL");
 gui.addGroup("grid", "Grid");
 gui.addNDimensionalOutput(["gridResX", "gridResY"], "Grid res", "", ", ", 0, "grid");
 gui.addNumericOutput("poissonIterations", "Poisson iterations", "", 0, "grid");
-gui.addButton("toggleSim", "Play / Pause", true, "grid", () => {
+
+gui.addGroup("sim", "Simulation");
+gui.addNumericOutput("mach", "Mach number", "", 2, "sim");
+gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 8, step: 0.01, val: 3.8, float: 2 }, "sim", (value) => {
+  inflowVel = value;
+});
+gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 6, float: 1 }, "sim", (value) => {
+  velRampUpStrength = Math.pow(2, value);
+});
+gui.addNumericInput("AoA", true, "Angle of attack", { min: -90, max: 90, step: 1, val: 0, float: 1 }, "sim", (value) => {
+  AoA = value;
+  let AoARad = AoA * Math.PI / 180;
+  xyAoA[0] = Math.cos(AoARad);
+  xyAoA[1] = Math.sin(AoARad);
+});
+gui.addNumericInput("inPressure", true, "Inflow pressure", { min: 0.01, max: 2, step: 0.01, val: inPressure, float: 3 }, "sim", (value) => {
+  inPressure = value;
+  uni.values.inPressure.set([inPressure]);
+});
+gui.addNumericInput("inRho", true, "Inflow density", { min: 0.01, max: 2, step: 0.01, val: inRho, float: 3 }, "sim", (value) => {
+  inRho = value;
+  uni.values.inRho.set([inRho]);
+});
+gui.addNumericInput("K_p", true, "K_p", { min: 0, max: 1, step: 0.01, val: K_p, float: 2 }, "sim", (value) => {
+  uni.values.K_p.set([value]);
+});
+gui.addNumericInput("K_u", true, "K_u", { min: 0, max: 1, step: 0.01, val: K_u, float: 2 }, "sim", (value) => {
+  uni.values.K_u.set([value]);
+});
+gui.addButton("toggleSim", "Play / Pause", true, "sim", () => {
     if (oldDt) {
       dt = oldDt;
       oldDt = null;

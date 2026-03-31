@@ -6,23 +6,23 @@ let poissonIterations = 0;
 let maxPoissonIterations = 10000;
 let gridFinalized = false;
 
-const simulationDomain = [384, 128]; // circumferential * radial for o grid
+const simulationDomain = [512, 256]; // circumferential * radial for o grid
 const gridVertexCount = [(simulationDomain[0]), (simulationDomain[1] + 1)];
 const xFluxTexSize = [(simulationDomain[0] + 1), (simulationDomain[1])];
 const yFluxTexSize = [(simulationDomain[0]), (simulationDomain[1] + 1)];
 const totalCellCount = [simulationDomain[0], simulationDomain[1] + 3]; // for boundary condition ghost cells - 2 for outer boundary, 1 for object boundary
 
 const gridDisplayProperties = Object.freeze({
-  triangles: [0, (gridVertexCount[0] + 1) * (gridVertexCount[1] - 1) *2],
+  full: [0, (gridVertexCount[0] + 1) * (gridVertexCount[1] - 1) *2],
   mesh: [1, gridVertexCount[0] * (gridVertexCount[1] - 1) * 4],//[1, (gridVertexCount[0] - 1.5) * gridVertexCount[1] * 4 + 4],
   vertices: [2, gridVertexCount[0] * gridVertexCount[1]],
 });
-let [gridDisplayMode, numVertices] = gridDisplayProperties.triangles;
+let [gridDisplayMode, numVertices] = gridDisplayProperties.full;
 uni.values.gridDisplayMode.set([gridDisplayMode]);
 
 gui.io.gridResX(simulationDomain[0]);
 gui.io.gridResY(simulationDomain[1]);
-gui.addDropdown("gridDisplayMode", "Grid display mode", ["triangles", "mesh", "vertices"], "grid", null, (value) => {
+gui.addDropdown("gridDisplayMode", "Grid display mode", ["full", "mesh", "vertices"], "grid", null, (value) => {
   [gridDisplayMode, numVertices] = gridDisplayProperties[value];
   uni.values.gridDisplayMode.set([gridDisplayMode]);
 });
@@ -60,12 +60,11 @@ function generateObjectBoundary(t) {
   // const x = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.cos(t);
   // const y = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.sin(t);
   
-  const N = 6;
+  const N = 4;
   const F = 0.1;
   // const r = 0.2 / Math.cos((t % (2 * Math.PI / N)) - Math.PI / N);
   // const x = r * Math.cos(t);
   // const y = r * F * Math.sin(t);
-  return [x, y];
   return [x, y];
 }
 function generateCircularOuterBoundary(t) {
