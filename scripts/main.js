@@ -273,52 +273,42 @@ texture-formats-tier1: ${textureTier1}
   });
 
   const integrationStage1ComputePipeline = newComputePipeline(integrationStage1ShaderCode, "integration stage 1");
-  const integrationStage1BindGroup = (stateIn, stateOut) => device.createBindGroup({
+  const integrationStage1BindGroup = device.createBindGroup({
     layout: integrationStage1ComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.residual.createView()},
-      { binding: 2, resource: stateIn.createView() },
-      { binding: 3, resource: stateOut.createView() },
+      { binding: 2, resource: storage.state0.createView() },
+      { binding: 3, resource: storage.state1.createView() },
     ],
     label: "integration stage 1 compute bind group"
   });
-  const integrationStage1BindGroups = [
-    integrationStage1BindGroup(storage.state0, storage.state1), // state1 = Qn, state0 = Q1
-  ];
 
   const integrationStage2ComputePipeline = newComputePipeline(integrationStage2ShaderCode, "integration stage 2");
-  const integrationStage2BindGroup = (stateIn, stateIn1, stateOut) => device.createBindGroup({
+  const integrationStage2BindGroup = device.createBindGroup({
     layout: integrationStage2ComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.residual.createView()},
-      { binding: 2, resource: stateIn.createView() },
-      { binding: 3, resource: stateIn1.createView() },
-      { binding: 4, resource: stateOut.createView() },
+      { binding: 2, resource: storage.state0.createView() },
+      { binding: 3, resource: storage.state1.createView() },
+      { binding: 4, resource: storage.state2.createView() },
     ],
     label: "integration stage 2 compute bind group"
   });
-  const integrationStage2BindGroups = [
-    integrationStage2BindGroup(storage.state0, storage.state1, storage.state2), // state0 = Qn, state1 = Q1, state2 = Q2
-  ];
 
   const integrationStage3ComputePipeline = newComputePipeline(integrationStage3ShaderCode, "integration stage 3");
-  const integrationStage3BindGroup = (stateIn, stateIn2, stateOut) => device.createBindGroup({
+  const integrationStage3BindGroup = device.createBindGroup({
     layout: integrationStage3ComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.residual.createView()},
-      { binding: 2, resource: stateIn.createView() },
-      { binding: 3, resource: stateIn2.createView() },
-      { binding: 4, resource: stateOut.createView() },
+      { binding: 2, resource: storage.state0.createView() },
+      { binding: 3, resource: storage.state1.createView() },
+      { binding: 4, resource: storage.state2.createView() },
     ],
     label: "integration stage 3 compute bind group"
   });
-  const integrationStage3BindGroups = [
-    integrationStage3BindGroup(storage.state0, storage.state1, storage.state2), // state0 = Qn, state1 = Q2, state2 = Qn+1
-    // integrationStage3BindGroup(storage.state0, storage.state2, storage.state1),
-  ];
 
   const visualizationComputePipeline = newComputePipeline(visualizationShaderCode, "visualization");
   const visualizationBindGroup = device.createBindGroup({
@@ -518,7 +508,7 @@ texture-formats-tier1: ${textureTier1}
         // fluxX, fluxY -> residual
         createComputePass(encoder.beginComputePass(), residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn) + residual -> state1 (Q1)
-        createComputePass(encoder.beginComputePass(), integrationStage1ComputePipeline, integrationStage1BindGroups[0], wgDispatchSize(simulationDomain));
+        createComputePass(encoder.beginComputePass(), integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
 
         // state1 -> state2 (Q1)
         createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
@@ -529,7 +519,7 @@ texture-formats-tier1: ${textureTier1}
         // fluxX, fluxY -> residual
         createComputePass(encoder.beginComputePass(), residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn), state1 (Q1) + residual -> state2 (Q2)
-        createComputePass(encoder.beginComputePass(), integrationStage2ComputePipeline, integrationStage2BindGroups[0], wgDispatchSize(simulationDomain));
+        createComputePass(encoder.beginComputePass(), integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
 
         // state2 -> state1 (Q2)
         createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
@@ -540,7 +530,7 @@ texture-formats-tier1: ${textureTier1}
         // fluxX, fluxY -> residual
         createComputePass(encoder.beginComputePass(), residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn), state1 (Q2) + residual -> state2 (Qn+1)
-        createComputePass(encoder.beginComputePass(), integrationStage3ComputePipeline, integrationStage3BindGroups[0], wgDispatchSize(simulationDomain));
+        createComputePass(encoder.beginComputePass(), integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
       }
     }
 

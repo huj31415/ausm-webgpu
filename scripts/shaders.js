@@ -289,26 +289,26 @@ fn toConservative(W: vec4f) -> vec4f {
   return vec4f(rho, rho * vel, rhoE);
 }
 
-fn M_1 (M: f32, plusOrMinus: i32) -> f32 {
-  return 0.5 * (M + f32(plusOrMinus) * abs(M));
+fn M_1 (M: f32, plusOrMinus: f32) -> f32 {
+  return 0.5 * (M + plusOrMinus * abs(M));
 }
 
-fn M_2 (M: f32, plusOrMinus: i32) -> f32 {
-  return f32(plusOrMinus) * 0.25 * (M + f32(plusOrMinus)) * (M + f32(plusOrMinus));
+fn M_2 (M: f32, plusOrMinus: f32) -> f32 {
+  return plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus);
 }
 
-fn M_4(M: f32, beta: f32, plusOrMinus: i32) -> f32 {
+fn M_4(M: f32, plusOrMinus: f32) -> f32 {
   return select(
     M_1(M, plusOrMinus),
-    M_2(M, plusOrMinus) * (1 - f32(plusOrMinus) * 16 * beta * M_2(M, -plusOrMinus)),
+    M_2(M, plusOrMinus) * (1 - plusOrMinus * 2 * M_2(M, -plusOrMinus)), // beta * 16 = 2
     abs(M) < 1.0
   );
 }
 
-fn P_5(M: f32, alpha: f32, plusOrMinus: i32) -> f32 {
+fn P_5(M: f32, alpha: f32, plusOrMinus: f32) -> f32 {
   return select(
     M_1(M, plusOrMinus) / M,
-    M_2(M, plusOrMinus) * ((f32(plusOrMinus) * 2 - M) - f32(plusOrMinus) * 16 * alpha * M * M_2(M, -plusOrMinus)),
+    M_2(M, plusOrMinus) * ((plusOrMinus * 2 - M) - plusOrMinus * alpha * M * M_2(M, -plusOrMinus)),
     abs(M) < 1.0
   );
 }
@@ -322,7 +322,8 @@ fn minmod(a: f32, b: f32) -> f32 {
 }
 
 fn vanAlbadaLimiter(r: vec4f) -> vec4f {
-  return (r * r + r) / (r * r + 1.0);
+  let r2 = r * r;
+  return (r2 + r) / (r2 + 1.0);
 }
 
 @compute @workgroup_size(WG_X, WG_Y)
@@ -368,27 +369,22 @@ fn main(
   var Q_LMUSCLprimitive = Q_Lprimitive + 0.5 * vanLeerLimiter(r_L) * (delta_Face);
   var Q_RMUSCLprimitive = Q_Rprimitive - 0.5 * vanLeerLimiter(r_R) * (delta_R);
 
-  let Q_LMUSCL = toConservative(Q_LMUSCLprimitive);
-  let Q_RMUSCL = toConservative(Q_RMUSCLprimitive);
-
   // interface states, with u = velocity normal to face
   // left state
-  let rho_L = Q_LMUSCL.x;
-  let vel_L = Q_LMUSCL.yz / rho_L;
+  let rho_L = Q_LMUSCLprimitive.x;
+  let vel_L = Q_LMUSCLprimitive.yz;
   let u_L = dot(vel_L, normal);
 
-  let p_L = (Q_LMUSCL.w - 0.5 * dot(vel_L, vel_L) * rho_L) * (uni.gamma - 1.0);
-  let a_L = sqrt(uni.gamma * p_L / rho_L);
-  let h_L = (Q_LMUSCL.w + p_L) / rho_L;
+  let p_L = Q_LMUSCLprimitive.w;
+  let h_L = p_L / ((uni.gamma - 1.0) * rho_L) + 0.5 * dot(vel_L, vel_L) + p_L / rho_L;
 
   // right state
-  let rho_R = Q_RMUSCL.x;
-  let vel_R = Q_RMUSCL.yz / rho_R;
+  let rho_R = Q_RMUSCLprimitive.x;
+  let vel_R = Q_RMUSCLprimitive.yz;
   let u_R = dot(vel_R, normal);
 
-  let p_R = (Q_RMUSCL.w - 0.5 * dot(vel_R, vel_R) * rho_R) * (uni.gamma - 1.0);
-  let a_R = sqrt(uni.gamma * p_R / rho_R);
-  let h_R = (Q_RMUSCL.w + p_R) / rho_R;
+  let p_R = Q_RMUSCLprimitive.w;
+  let h_R = p_R / ((uni.gamma - 1.0) * rho_R) + 0.5 * dot(vel_R, vel_R) + p_R / rho_R;
 
   // more accurate
   let h_t_interface = 0.5 * (h_L + h_R); // total enthalpy
@@ -407,16 +403,14 @@ fn main(
   let f_a = M_o2 * (2 - M_o2); // eq 72
   let rho_interface = 0.5 * (rho_L + rho_R);
 
-  let alpha = 3.0 / 16.0 * (-4 + 5 * f_a * f_a); // eq 76
-  let beta = 0.125; // 1/8, eq 76
+  let M_interface = M_4(M_L, 1) + M_4(M_R, -1) - uni.K_p / f_a * max(1 - sigma * Mbar2, 0) * (p_R - p_L) / (rho_interface * a_interface2); // eq 73
 
-  let M_interface = M_4(M_L, beta, 1) + M_4(M_R, beta, -1) - uni.K_p / f_a * max(1 - sigma * Mbar2, 0) * (p_R - p_L) / (rho_interface * a_interface2); // eq 73
-
-  let mdot = a_interface * M_interface * select(rho_R, rho_L, M_interface > 0); // eq 74
-
-  let P_5plus = P_5(M_L, alpha, 1);
-  let P_5minus = P_5(M_R, alpha, -1);
+  let alpha16 = 3.0 * (-4 + 5 * f_a * f_a); // eq 76 * 16
+  let P_5plus = P_5(M_L, alpha16, 1);
+  let P_5minus = P_5(M_R, alpha16, -1);
   let P_interface = P_5plus * p_L + P_5minus * p_R - uni.K_u * P_5plus * P_5minus * (rho_L + rho_R) * f_a * a_interface * (u_R - u_L); // eq 75
+  
+  let mdot = a_interface * M_interface * select(rho_R, rho_L, M_interface > 0); // eq 74
 
   let phi_R = vec4f(1, vel_R, h_R); // eq 3
   let phi_L = vec4f(1, vel_L, h_L);
@@ -551,13 +545,6 @@ fn main(
   let Q2 = textureLoad(stateIn2, cellIdx, 0);
 
   let newQ = (Q + 2.0 * (Q2 + uni.dt * res)) / 3.0;
-
-  // let dx = 
-  // let rho = newQ.x;
-  // let vel = length(Q2.yz / rho);
-  // let p = (newQ.w - 0.5 * dot(vel, vel) * rho) * (uni.gamma - 1.0);
-  // let a = sqrt(uni.gamma * max(p, 1e-7) / max(rho, 1e-7));
-  // let cfl = dx / (vel + a);
   textureStore(stateOut, cellIdx, newQ);
 }
 `;
