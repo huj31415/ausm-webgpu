@@ -16,9 +16,9 @@ uni.addUniform("inRho", "f32");
 uni.addUniform("gamma", "f32");
 uni.addUniform("K_p", "f32");
 uni.addUniform("K_u", "f32");
-// uni.addUniform("inState", "vec4f");
-
 uni.addUniform("gridDisplayMode", "f32");
+
+uni.addUniform("inState", "vec4f");
 
 uni.finalize();
 
@@ -55,14 +55,14 @@ let stepsPerFrame = 100;
 
 let inflowVel = 3.8;
 let actualInflowVel = 0;
-let velRampUpStrength = 50;
+let velRampUpStrength = 64;
 let AoA = 0;
 let xyAoA = [1, 0];
 let gamma = 1.4;
 let inPressure = 1.0 / gamma;
 let inRho = 1.0;
 let K_p = 0;//.25;
-let K_u = 0;//.75;
+let K_u = 0.75;
 
 
 const canvas = document.getElementById("canvas");
@@ -90,7 +90,7 @@ gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 8, step
 });
 gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 6, float: 1 }, "sim", (value) => {
   velRampUpStrength = Math.pow(2, value);
-});
+}, "How fast the velocity changes when ramping up or down");
 gui.addNumericInput("AoA", true, "Angle of attack", { min: -90, max: 90, step: 1, val: 0, float: 1 }, "sim", (value) => {
   AoA = value;
   let AoARad = AoA * Math.PI / 180;
@@ -111,16 +111,19 @@ gui.addNumericInput("K_p", true, "K_p", { min: 0, max: 1, step: 0.01, val: K_p, 
 gui.addNumericInput("K_u", true, "K_u", { min: 0, max: 1, step: 0.01, val: K_u, float: 2 }, "sim", (value) => {
   uni.values.K_u.set([value]);
 });
+gui.addNumericInput("dtPerFrame", true, "dt/frame", { min: 10, max: 500, step: 10, val: stepsPerFrame, float: 0 }, "sim", (value) => {
+  stepsPerFrame = value;
+});
 gui.addButton("toggleSim", "Play / Pause", true, "sim", () => {
-    if (oldDt) {
-      dt = oldDt;
-      oldDt = null;
-    } else {
-      oldDt = dt;
-      dt = 0;
-    }
-    uni.values.dt.set([dt]);
-  });
+  if (oldDt) {
+    dt = oldDt;
+    oldDt = null;
+  } else {
+    oldDt = dt;
+    dt = 0;
+  }
+  uni.values.dt.set([dt]);
+});
 
 // handle resizing
 window.onresize = window.onload = () => {

@@ -55,13 +55,13 @@ function generateObjectBoundary(t) {
   // normalize to [0, 1]
   t /= gridVertexCount[0];
   t *= 2 * Math.PI;
-  const x = 0.1 * Math.cos(t);
+  const x = 0.1 * Math.cos(t)-0.3;
   const y = 0.1 * Math.sin(t);
   // const x = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.cos(t);
   // const y = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.sin(t);
   
-  const N = 4;
-  const F = 0.1;
+  // const N = 6;
+  // const F = 0.1;
   // const r = 0.2 / Math.cos((t % (2 * Math.PI / N)) - Math.PI / N);
   // const x = r * Math.cos(t);
   // const y = r * F * Math.sin(t);
@@ -91,7 +91,8 @@ function generateSquareOuterBoundary(t) {
     return [t*2-1, -1];
   }
 }
-const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t)); // generateNACA4Boundary(t, 4415, 0.2)
+const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t));
+// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2));
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateCircularOuterBoundary(t));
 for (let x = 0; x < gridVertexCount[0]; x++) {
   const i = vtxIdx(x, 0);
