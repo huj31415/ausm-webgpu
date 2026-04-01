@@ -19,6 +19,7 @@ uni.addUniform("inState", "vec4f");
 uni.addUniform("gamma", "f32");
 uni.addUniform("gridDisplayMode", "f32");
 uni.addUniform("simDisplayMode", "f32");
+uni.addUniform("cflFactor", "f32");
 
 
 uni.finalize();
@@ -48,7 +49,7 @@ const storage = {
   residual: null, // (M)x(N)
 }
 
-let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = 0;
+let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = cflTime = 0;
 let poissonTime = 0;
 let dt = 1e-4;
 let oldDt;
@@ -94,8 +95,9 @@ gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
 gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
 gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
 // gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfL");
-gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfL");
 gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfL");
+gui.addNumericOutput("cflTime", "CFL", "ms", 2, "perfL");
+gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfL");
 
 gui.addGroup("grid", "Grid");
 gui.addNDimensionalOutput(["gridResX", "gridResY"], "Grid res", "", ", ", 0, "grid");
@@ -106,8 +108,11 @@ gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density",
   displayMode = simDisplayModes[value];
   uni.values.simDisplayMode.set([displayMode]);
 });
+gui.addNumericInput("cflFactor", true, "CFL factor", { min: 0.1, max: 3, step: 0.1, val: 2.0, float: 1 }, "sim", (value) => {
+  uni.values.cflFactor.set([value]);
+});
 gui.addNumericOutput("mach", "Mach number", "", 2, "sim");
-gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 8, step: 0.01, val: 3.8, float: 2 }, "sim", (value) => {
+gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 40, step: 0.01, val: 3.8, float: 2 }, "sim", (value) => {
   inflowVel = value;
 });
 gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 7, float: 1 }, "sim", (value) => {

@@ -89,8 +89,8 @@ function generateSquareOuterBoundary(t, lengthRatio) {
     return [(t*2-1) * lengthRatio, -1];
   }
 }
-const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.2, 4, 0.1, -0.5));
-// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 199, 0.2, -0.7));
+const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.2, 400, 0.1, -0.7));
+// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4405, 0.2, -0.7));
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSquareOuterBoundary(t, 1.5));
 for (let x = 0; x < gridVertexCount[0]; x++) {
   const i = vtxIdx(x, 0);

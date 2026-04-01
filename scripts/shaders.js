@@ -473,6 +473,7 @@ ${uni.uniformStruct}
 @group(0) @binding(1) var residual: texture_2d<f32>;  // rgba32float
 @group(0) @binding(2) var stateIn: texture_2d<f32>; // rgba32float
 @group(0) @binding(3) var stateOut: texture_storage_2d<rgba32float, write>; // rgba32float
+@group(0) @binding(4) var<storage, read> maxWaveSpeed: u32;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -481,12 +482,13 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
+  let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let cellIdx = gid.xy + vec2u(0, 1); // shift up by 1 to account for ghost cells
   let res = textureLoad(residual, gid.xy, 0);
   let Q = textureLoad(stateIn, cellIdx, 0);
 
-  let newQ = Q + uni.dt * res;
+  let newQ = Q + dt * res;
   textureStore(stateOut, cellIdx, newQ);
 }
 `;
@@ -501,6 +503,7 @@ ${uni.uniformStruct}
 @group(0) @binding(2) var stateIn: texture_2d<f32>; // rgba32float
 @group(0) @binding(3) var stateIn1: texture_2d<f32>; // rgba32float
 @group(0) @binding(4) var stateOut: texture_storage_2d<rgba32float, write>; // rgba32float
+@group(0) @binding(5) var<storage, read> maxWaveSpeed: u32;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -509,13 +512,14 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
+  let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let cellIdx = gid.xy + vec2u(0, 1); // shift up by 1 to account for ghost cells
   let res = textureLoad(residual, gid.xy, 0);
   let Q = textureLoad(stateIn, cellIdx, 0);
   let Q1 = textureLoad(stateIn1, cellIdx, 0);
 
-  let newQ = 0.75 * Q + 0.25 * (Q1 + uni.dt * res);
+  let newQ = 0.75 * Q + 0.25 * (Q1 + dt * res);
   textureStore(stateOut, cellIdx, newQ);
 }
 `;
@@ -530,6 +534,7 @@ ${uni.uniformStruct}
 @group(0) @binding(2) var stateIn: texture_2d<f32>; // rgba32float
 @group(0) @binding(3) var stateIn2: texture_2d<f32>; // rgba32float
 @group(0) @binding(4) var stateOut: texture_storage_2d<rgba32float, write>; // rgba32float
+@group(0) @binding(5) var<storage, read> maxWaveSpeed: u32;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -538,13 +543,14 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
+  let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let cellIdx = gid.xy + vec2u(0, 1); // shift up by 1 to account for ghost cells
   let res = textureLoad(residual, gid.xy, 0);
   let Q = textureLoad(stateIn, cellIdx, 0);
   let Q2 = textureLoad(stateIn2, cellIdx, 0);
 
-  let newQ = (Q + 2.0 * (Q2 + uni.dt * res)) / 3.0;
+  let newQ = (Q + 2.0 * (Q2 + dt * res)) / 3.0;
   textureStore(stateOut, cellIdx, newQ);
 }
 `;
@@ -554,15 +560,18 @@ fn main(
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // need to clear each frame: device.queue.writeBuffer(cflOutBuffer, 0, new Uint32Array([0x7F7FFFFF]));
 // read as let dt = bitcast<f32>(cfl) * uni.cflFactor;
-const CFLReductionShaderCode = /* wgsl */`
+const cflReductionShaderCode = /* wgsl */`
 ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 @group(0) @binding(1) var<storage, read> cflValues: array<f32>;
-@group(0) @binding(2) var<storage, read_write> cflOut: atomic<u32>;
+@group(0) @binding(2) var<storage, read_write> maxWaveSpeed: atomic<u32>;
+
+override WG_X: u32;
+override WG_Y: u32;
 
 const blockSize = 256u;
-var<workgroup> shared: array<f32, blockSize>;
+var<workgroup> wgShared: array<f32, blockSize>;
 
 @compute @workgroup_size(blockSize)
 fn main(
@@ -573,26 +582,26 @@ fn main(
 ) {
   let lidx = lid.x;
   var i = gid.x;
-  var acc = 1e38f;
+  var acc = 0.0;
   let arraySize = u32(uni.simDomain.x) * u32(uni.simDomain.y);
   let stride = blockSize * nwg.x;
   while (i < arraySize) {
-    acc = min(acc, cflValues[i]);
+    acc = max(acc, cflValues[i]);
     i += stride;
   }
-  shared[lidx] = acc;
+  wgShared[lidx] = acc;
 
   workgroupBarrier();
 
-  // parallel reduction to find min CFL value
+  // parallel reduction to find max CFL value
   for (var s = blockSize / 2u; s > 0u; s >>= 1u) {
     if (lidx < s) {
-      shared[lidx] = min(shared[lidx], shared[lidx + s]);
+      wgShared[lidx] = max(wgShared[lidx], wgShared[lidx + s]);
     }
     workgroupBarrier();
   }
   if (lidx == 0u) {
-    atomicMin(&cflOut, bitcast<u32>(shared[0]));
+    atomicMax(&maxWaveSpeed, bitcast<u32>(wgShared[0]));
   }
 }
 `;
@@ -602,8 +611,10 @@ ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 @group(0) @binding(1) var state: texture_2d<f32>;   // rgba32float
-// @group(0) @binding(2) var cellDistances: texture_2d<f32>;   // rgba32float
-@group(0) @binding(3) var vis: texture_storage_2d<rg11b10ufloat, write>; // rgba32float
+@group(0) @binding(2) var faceLengths: texture_2d<f32>;   // rgba32float
+@group(0) @binding(3) var area: texture_2d<f32>;   // r32float
+@group(0) @binding(4) var vis: texture_storage_2d<rg11b10ufloat, write>; // rgba32float
+@group(0) @binding(5) var<storage, read_write> waveSpeeds: array<f32>;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -626,10 +637,17 @@ fn main(
   let pressure = (state0.w - 0.5 * rho * dot(velocity, velocity)) * (uni.gamma - 1.0);
   let temperature = pressure / rho;
   let inTemp = uni.inPressure / uni.inRho;
-  let mach = length(velocity) / sqrt(uni.gamma * temperature);
+  let a = sqrt(uni.gamma * temperature);
+  let speed = length(velocity);
+  let mach = speed / a;
   let inMach = inVelMag / sqrt(uni.gamma * inTemp);
   let entropy = log(pressure / pow(rho, uni.gamma));
   let inEntropy = log(uni.inPressure / pow(uni.inRho, uni.gamma));
+
+  let faceLengths = textureLoad(faceLengths, gid.xy, 0);
+  let area = textureLoad(area, gid.xy, 0).x;
+  waveSpeeds[gid.x + gid.y * u32(uni.simDomain.x)] = (speed + a) * dot(faceLengths, vec4f(1.0)) / (2.0 * area);
+
 
   var color: vec4f;
 
@@ -696,8 +714,6 @@ fn main(
     }
   }
   textureStore(vis, gid.xy, colorMapBRYW(localValue / (freeStreamValue * 2)));
-
-  // calculate cfl here?
 }
 `;
 

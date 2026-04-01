@@ -123,6 +123,23 @@ texture-formats-tier1: ${textureTier1}
   storage.residual = new2dTexture("residual", simulationDomain, `rgba32float`);
   
   storage.vis = new2dTexture("visualization", simulationDomain, `rg11b10ufloat`);
+  storage.waveSpeeds = device.createBuffer({
+    size: simulationDomain[0] * simulationDomain[1] * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    label: "waveSpeeds buffer"
+  });
+  storage.maxWaveSpeed = device.createBuffer({
+    size: 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    label: "maxWaveSpeed buffer"
+  });
+  device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
+
+  // const stagingBuffer = device.createBuffer({
+  //   size: 4,
+  //   usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  // });
+
 
   device.queue.writeTexture(
     { texture: storage.gridPoints0 },
@@ -280,6 +297,7 @@ texture-formats-tier1: ${textureTier1}
       { binding: 1, resource: storage.residual.createView()},
       { binding: 2, resource: storage.state0.createView() },
       { binding: 3, resource: storage.state1.createView() },
+      { binding: 4, resource: { buffer: storage.maxWaveSpeed } },
     ],
     label: "integration stage 1 compute bind group"
   });
@@ -293,6 +311,7 @@ texture-formats-tier1: ${textureTier1}
       { binding: 2, resource: storage.state0.createView() },
       { binding: 3, resource: storage.state1.createView() },
       { binding: 4, resource: storage.state2.createView() },
+      { binding: 5, resource: { buffer: storage.maxWaveSpeed } },
     ],
     label: "integration stage 2 compute bind group"
   });
@@ -306,6 +325,7 @@ texture-formats-tier1: ${textureTier1}
       { binding: 2, resource: storage.state0.createView() },
       { binding: 3, resource: storage.state1.createView() },
       { binding: 4, resource: storage.state2.createView() },
+      { binding: 5, resource: { buffer: storage.maxWaveSpeed } },
     ],
     label: "integration stage 3 compute bind group"
   });
@@ -316,10 +336,23 @@ texture-formats-tier1: ${textureTier1}
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.state2.createView() },
-      // { binding: 2, resource: storage.cellDistances.createView() },
-      { binding: 3, resource: storage.vis.createView() },
+      { binding: 2, resource: storage.faceLengths.createView() },
+      { binding: 3, resource: storage.gridArea.createView() },
+      { binding: 4, resource: storage.vis.createView() },
+      { binding: 5, resource: { buffer: storage.waveSpeeds } },
     ],
     label: "visualization compute bind group"
+  });
+
+  const cflReductionComputePipeline = newComputePipeline(cflReductionShaderCode, "CFL reduction");
+  const cflReductionBindGroup = device.createBindGroup({
+    layout: cflReductionComputePipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuffer } },
+      { binding: 1, resource: { buffer: storage.waveSpeeds } },
+      { binding: 2, resource: { buffer: storage.maxWaveSpeed } },
+    ],
+    label: "CFL reduction compute bind group"
   });
 
   const filter = f32filterable ? "linear" : "nearest";
@@ -401,19 +434,15 @@ texture-formats-tier1: ${textureTier1}
     newRenderPipeline("point-list"),
   ]
 
-  const renderBindGroup = (visTex) => device.createBindGroup({
+  const renderBindGroup = device.createBindGroup({
     layout: renderBindGroupLayout, //renderPipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.gridPoints0.createView() },
-      { binding: 2, resource: visTex.createView() },
+      { binding: 2, resource: storage.vis.createView() },
       { binding: 3, resource: gridSampler },
     ],
   });
-
-  const renderBindGroups = [
-    renderBindGroup(storage.vis),
-  ];
 
   const renderPassDescriptor = {
     label: 'render pass',
@@ -429,6 +458,7 @@ texture-formats-tier1: ${textureTier1}
 
   const renderTimingHelper = new TimingHelper(device);
   const postprocessingTimingHelper = new TimingHelper(device);
+  const reductionTimingHelper = new TimingHelper(device);
 
   const wgDispatchSize = (texSize) => [
     Math.ceil(texSize[0] / wg_x),
@@ -536,14 +566,30 @@ texture-formats-tier1: ${textureTier1}
     }
 
     createComputePass(postprocessingTimingHelper.beginComputePass(encoder), visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
+    createComputePass(reductionTimingHelper.beginComputePass(encoder), cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256), 1]);
+    // encoder.copyBufferToBuffer(
+    //   storage.maxWaveSpeed,          // Source buffer
+    //   0,                  // Source offset
+    //   stagingBuffer,      // Destination buffer
+    //   0,                  // Destination offset
+    //   4          // Size to copy
+    // );
+
     const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
     renderPass.setPipeline(renderPipelines[gridDisplayMode]);
-    renderPass.setBindGroup(0, renderBindGroups[0]);
+    renderPass.setBindGroup(0, renderBindGroup);
     renderPass.draw(numVertices);
     renderPass.end();
 
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
+
+    // await stagingBuffer.mapAsync(GPUMapMode.READ);
+    // const copyArrayBuffer = stagingBuffer.getMappedRange();
+    // const data = copyArrayBuffer.slice(0, 4);
+    // stagingBuffer.unmap();
+    // const resultValues = new Float32Array(data);
+    // console.log(resultValues);
 
     // if (run) {
     //   computeTimingHelper.getResult().then(gpuTime => computeTime += (gpuTime / 1e6 - computeTime) / filterStrength);
@@ -552,6 +598,7 @@ texture-formats-tier1: ${textureTier1}
     // }
     renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime - renderTime) / filterStrength);
     postprocessingTimingHelper.getResult().then(gpuTime => postprocessingTime += (gpuTime - postprocessingTime) / filterStrength);
+    reductionTimingHelper.getResult().then(gpuTime => cflTime += (gpuTime - cflTime) / filterStrength);
 
     gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
@@ -567,6 +614,7 @@ texture-formats-tier1: ${textureTier1}
     gui.io.frameTime(deltaTime);
     // gui.io.computeTime();
     gui.io.postTime(postprocessingTime / 1e6);
+    gui.io.cflTime(cflTime / 1e6);
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
   }, 100);
@@ -585,6 +633,7 @@ uni.values.K_p.set([K_p]);
 uni.values.K_u.set([K_u]);
 uni.values.inPressure.set([inPressure]);
 uni.values.inRho.set([inRho]);
+uni.values.cflFactor.set([2.0]);
 
 
 main()
