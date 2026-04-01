@@ -609,7 +609,7 @@ override WG_X: u32;
 override WG_Y: u32;
 
 fn colorMapBRY(value: f32) -> vec4f {
-  return vec4f(value, value - 1.0, 1.0 - value, 1.0);
+  return vec4f(value, value - 1.0, max(1.0 - value, 0.0) + max(value - 2.0, 0.0), 1.0);
 }
 
 @compute @workgroup_size(WG_X, WG_Y)
@@ -620,7 +620,7 @@ fn main(
 
   let state0 = textureLoad(state, gid.xy + vec2u(0, 1), 0); // shift up by 1 to account for ghost cells
   let adjRho = state0.x / (2 * uni.inRho);
-  // textureStore(vis, gid.xy, colorMapBRY(adjRho)); // visualize density directly for debugging
+  textureStore(vis, gid.xy, colorMapBRY(adjRho)); // visualize density directly for debugging
   
   // gradient of density for numerical schlieren
   let leftIdx = (gid.x + u32(uni.simDomain.x) - 1) % u32(uni.simDomain.x);
@@ -636,7 +636,9 @@ fn main(
   let gradY = (rhoUp - rhoDown);// / (distances.z + distances.w);
   let gradMag = length(vec2f(gradX, gradY));
 
-  textureStore(vis, gid.xy, vec4f(exp(-gradMag * 2.0)));
+  // textureStore(vis, gid.xy, vec4f(exp(-gradMag * 2.0)));
+
+  // calculate cfl here?
 }
 `;
 

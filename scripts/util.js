@@ -1,24 +1,24 @@
 const uni = new Uniforms();
 uni.addUniform("simDomain", "vec2f");
-uni.addUniform("resolution", "vec2f");
-
 uni.addUniform("resRatio", "vec2f");
-uni.addUniform("objectCenter", "vec2f");
 
+uni.addUniform("objectCenter", "vec2f");
 uni.addUniform("pan", "vec2f");
+
+uni.addUniform("inflowV", "vec2f");
 uni.addUniform("zoom", "f32");
 uni.addUniform("dt", "f32");
 
-uni.addUniform("inflowV", "vec2f");
 uni.addUniform("inPressure", "f32");
 uni.addUniform("inRho", "f32");
-
-uni.addUniform("gamma", "f32");
 uni.addUniform("K_p", "f32");
 uni.addUniform("K_u", "f32");
-uni.addUniform("gridDisplayMode", "f32");
 
 uni.addUniform("inState", "vec4f");
+
+uni.addUniform("gamma", "f32");
+uni.addUniform("gridDisplayMode", "f32");
+
 
 uni.finalize();
 
@@ -51,7 +51,7 @@ let deltaTime = lastFrameTime = fps = jsTime = renderTime = 0;
 let poissonTime = 0;
 let dt = 1e-4;
 let oldDt;
-let stepsPerFrame = 100;
+let stepsPerFrame = 70;
 
 let inflowVel = 3.8;
 let actualInflowVel = 0;
@@ -66,6 +66,7 @@ let K_u = 0.75;
 
 
 const canvas = document.getElementById("canvas");
+let pixelRatio = window.devicePixelRatio || 1;
 
 const gui = new GUI("AUSM+-up compressible fluid sim", canvas);
 
@@ -127,10 +128,12 @@ gui.addButton("toggleSim", "Play / Pause", true, "sim", () => {
 
 // handle resizing
 window.onresize = window.onload = () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  uni.values.resolution.set([canvas.width, canvas.height]);
-  const invMinRes = 1 / Math.min(...uni.values.resolution);
+  pixelRatio = window.devicePixelRatio || 1;
+  // canvas.style.zoom = 1 / pixelRatio;
+  canvas.width = window.innerWidth * pixelRatio;
+  canvas.height = window.innerHeight * pixelRatio;
+  // uni.values.resolution.set([canvas.width, canvas.height]);
+  const invMinRes = 1 / Math.min(canvas.width, canvas.height);
   uni.values.resRatio.set([canvas.width * invMinRes, canvas.height * invMinRes]);
   gui.io.res([window.innerWidth, window.innerHeight]);
 };
@@ -141,25 +144,23 @@ let lastMousePos = [0, 0];
 let currentZoom = 1.0;
 canvas.onmousedown = (e) => {
   isPanning = true;
-  lastMousePos = [e.clientX, e.clientY];
 }
 canvas.onmouseup = canvas.onmouseleave = () => {
   isPanning = false;
 }
 canvas.onmousemove = (e) => {
   if (isPanning) {
-    const deltaX = e.clientX - lastMousePos[0];
-    const deltaY = e.clientY - lastMousePos[1];
-    uni.values.pan[0] += deltaX / canvas.width * 2;
-    uni.values.pan[1] -= deltaY / canvas.height * 2;
-    lastMousePos = [e.clientX, e.clientY];
+    let size = Math.min(canvas.width, canvas.height);
+    uni.values.pan[0] += e.movementX / size * 2 * pixelRatio;
+    uni.values.pan[1] -= e.movementY / size * 2 * pixelRatio;
   }
 }
 canvas.onwheel = (e) => {
   const zoomAmount = 1.1;
+  let size = Math.min(canvas.width, canvas.height);
   const mousePos = [
-    e.clientX / canvas.width * 2 - 1,
-    1 - e.clientY / canvas.height * 2
+    (e.clientX / window.innerWidth * 2 - 1) * pixelRatio,
+    (1 - e.clientY / window.innerHeight * 2) * pixelRatio
   ]
   const worldMousePos = [
     (mousePos[0] - uni.values.pan[0]) / currentZoom,
