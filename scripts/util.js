@@ -18,6 +18,7 @@ uni.addUniform("inState", "vec4f");
 
 uni.addUniform("gamma", "f32");
 uni.addUniform("gridDisplayMode", "f32");
+uni.addUniform("simDisplayMode", "f32");
 
 
 uni.finalize();
@@ -47,7 +48,7 @@ const storage = {
   residual: null, // (M)x(N)
 }
 
-let deltaTime = lastFrameTime = fps = jsTime = renderTime = 0;
+let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = 0;
 let poissonTime = 0;
 let dt = 1e-4;
 let oldDt;
@@ -55,7 +56,7 @@ let stepsPerFrame = 70;
 
 let inflowVel = 3.8;
 let actualInflowVel = 0;
-let velRampUpStrength = 64;
+let velRampUpStrength = 128;
 let AoA = 0;
 let xyAoA = [1, 0];
 let gamma = 1.4;
@@ -63,6 +64,21 @@ let inPressure = 1.0 / gamma;
 let inRho = 1.0;
 let K_p = 0;//.25;
 let K_u = 0.75;
+
+const simDisplayModes = Object.freeze({
+  schlieren: 0,
+  vorticity: 1,
+  density: 2,
+  temperature: 3,
+  pressure: 4,
+  mach: 5,
+  velocity: 6,
+  entropy: 7,
+  pressureLoss: 8,
+});
+
+let displayMode = simDisplayModes.schlieren;
+uni.values.simDisplayMode.set([displayMode]);
 
 
 const canvas = document.getElementById("canvas");
@@ -77,19 +93,24 @@ gui.addHalfWidthGroups("perfL", "perfR", "perf");
 gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
 gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
 gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
-gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfL");
+// gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfL");
 gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfL");
+gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfL");
 
 gui.addGroup("grid", "Grid");
 gui.addNDimensionalOutput(["gridResX", "gridResY"], "Grid res", "", ", ", 0, "grid");
 gui.addNumericOutput("poissonIterations", "Poisson iterations", "", 0, "grid");
 
 gui.addGroup("sim", "Simulation");
+gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density", "temperature", "pressure", "mach", "velocity", "vorticity", "entropy", "pressureLoss"], "sim", null, (value) => {
+  displayMode = simDisplayModes[value];
+  uni.values.simDisplayMode.set([displayMode]);
+});
 gui.addNumericOutput("mach", "Mach number", "", 2, "sim");
 gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 8, step: 0.01, val: 3.8, float: 2 }, "sim", (value) => {
   inflowVel = value;
 });
-gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 6, float: 1 }, "sim", (value) => {
+gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 7, float: 1 }, "sim", (value) => {
   velRampUpStrength = Math.pow(2, value);
 }, "How fast the velocity changes when ramping up or down");
 gui.addNumericInput("AoA", true, "Angle of attack", { min: -90, max: 90, step: 1, val: 0, float: 1 }, "sim", (value) => {

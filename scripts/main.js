@@ -316,7 +316,7 @@ texture-formats-tier1: ${textureTier1}
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.state2.createView() },
-      { binding: 2, resource: storage.cellDistances.createView() },
+      // { binding: 2, resource: storage.cellDistances.createView() },
       { binding: 3, resource: storage.vis.createView() },
     ],
     label: "visualization compute bind group"
@@ -428,6 +428,7 @@ texture-formats-tier1: ${textureTier1}
   const filterStrength = 50;
 
   const renderTimingHelper = new TimingHelper(device);
+  const postprocessingTimingHelper = new TimingHelper(device);
 
   const wgDispatchSize = (texSize) => [
     Math.ceil(texSize[0] / wg_x),
@@ -534,7 +535,7 @@ texture-formats-tier1: ${textureTier1}
       }
     }
 
-    createComputePass(encoder.beginComputePass(), visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
+    createComputePass(postprocessingTimingHelper.beginComputePass(encoder), visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
     const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
     renderPass.setPipeline(renderPipelines[gridDisplayMode]);
     renderPass.setBindGroup(0, renderBindGroups[0]);
@@ -550,6 +551,7 @@ texture-formats-tier1: ${textureTier1}
     //   computeTime = 0;
     // }
     renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime - renderTime) / filterStrength);
+    postprocessingTimingHelper.getResult().then(gpuTime => postprocessingTime += (gpuTime - postprocessingTime) / filterStrength);
 
     gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
@@ -564,6 +566,7 @@ texture-formats-tier1: ${textureTier1}
     gui.io.jsTime(jsTime);
     gui.io.frameTime(deltaTime);
     // gui.io.computeTime();
+    gui.io.postTime(postprocessingTime / 1e6);
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
   }, 100);
