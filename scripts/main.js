@@ -122,7 +122,7 @@ texture-formats-tier1: ${textureTier1}
   storage.fluxY = new2dTexture("fluxY", yFluxTexSize, `rgba32float`);
   storage.residual = new2dTexture("residual", simulationDomain, `rgba32float`);
   
-  storage.vis = new2dTexture("visualization", simulationDomain, `rg11b10ufloat`);
+  storage.vis = new2dTexture("visualization", simulationDomain, `rgba8unorm`);
   storage.waveSpeeds = device.createBuffer({
     size: simulationDomain[0] * simulationDomain[1] * 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -378,7 +378,7 @@ texture-formats-tier1: ${textureTier1}
     entries: [
       {
         binding: 0,
-        visibility: GPUShaderStage.VERTEX,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
         buffer: {
           type: "uniform",
           hasDynamicOffset: false,
@@ -474,17 +474,30 @@ texture-formats-tier1: ${textureTier1}
     pass.end();
   }
 
+  // get target frame time by measuring the time of two consecutive frames
+  let targetFrameTime = 0;
+  requestAnimationFrame((timestamp) => {
+    let frameStartTime = timestamp;
+    requestAnimationFrame((timestamp) => {
+      targetFrameTime = timestamp - frameStartTime - 2; // subtract 2ms for overhead
+    });
+  });
+
 
   function render() {
     const startTime = performance.now();
     deltaTime += Math.min(startTime - lastFrameTime - deltaTime, 1e4) / filterStrength;
     fps += (1e3 / deltaTime - fps) / filterStrength;
+
+    const timeDifference = (startTime - lastFrameTime) - targetFrameTime;
+    stepsPerFrame = Math.max(1, Math.round(stepsPerFrame - Math.min(100, timeDifference) * 0.05));
+    if (timeDifference < -1) stepsPerFrame += 1;
     lastFrameTime = startTime;
 
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
-    actualInflowVel += (inflowVel - actualInflowVel) / velRampUpStrength;
+    actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
     const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
     uni.values.inflowV.set(inflowFinal);
     const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
@@ -617,6 +630,7 @@ texture-formats-tier1: ${textureTier1}
     gui.io.cflTime(cflTime / 1e6);
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
+    gui.io.stepsPerFrame(stepsPerFrame);
   }, 100);
 
 
@@ -634,6 +648,7 @@ uni.values.K_u.set([K_u]);
 uni.values.inPressure.set([inPressure]);
 uni.values.inRho.set([inRho]);
 uni.values.cflFactor.set([2.0]);
+uni.values.muscl.set([1.0]);
 
 
 main()

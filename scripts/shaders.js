@@ -94,7 +94,7 @@ fn main(
   // adjust Q based on length difference and position in domain
   let lengthDiff = (ds_xi - ds_eta) / (max(ds_xi, ds_eta) + 1e-6);
   // let Q = lengthDiff * smoothstep(1, -2, f32(gid.y) / uni.simDomain.y);// * exp(-f32(gid.y));
-  let Q = 0.0;
+  let Q = 0.0; //-0.01;
   // adjust P based on skewness
   // let P = -.03 * beta / sqrt(alpha * gamma);
   let P = 0.0;
@@ -236,11 +236,43 @@ fn main(
       ghostState = uni.inState; //uni.inRho * vec4f(1, uni.inflowV, rhoE); // rho, rho*u, rho*v, rho*E
     } else {
       // outflow
-      let P_int = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) * (uni.gamma - 1.0);
-      let a2inv = rho_int / (uni.gamma * P_int);
-      let M_int = dot(u_int, u_int) * a2inv;
-      let ambientRhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * rho_int * dot(u_int, u_int); //dot(uni.inflowV, uni.inflowV)
-      ghostState = select(vec4f(interiorState.xyz, ambientRhoE), interiorState, M_int >= 1.0); // copy for M > 1.0, fix pressure to ambient for M < 1.0
+      let gammaMinus1Inv = 1.0 / (uni.gamma - 1.0);
+      let u_int2 = dot(u_int, u_int);
+      let P_int = (interiorState.w - 0.5 * u_int2 * rho_int) * (uni.gamma - 1.0);
+      let a2 = (uni.gamma * P_int) / rho_int;
+      let M_int = u_int2 / a2;
+      let M_inf2 = dot(uni.inflowV, uni.inflowV) / (uni.gamma * uni.inPressure / rho_int);
+      if (M_int < 1.0 && M_inf2 < 1.0) {
+        // subsonic outflow using Riemann invariant to extrapolate ghost state
+        let u_normal_int = dot(u_int, normal);
+        let u_normal_inf = boundaryInOrOut;
+        let a_int = sqrt(a2);
+        let a_inf = sqrt(uni.gamma * uni.inPressure / rho_int);
+        
+        // Riemann invariants
+        let J_int = u_normal_int + 2 * a_int * gammaMinus1Inv;
+        let J_ext = u_normal_inf - 2 * a_inf * gammaMinus1Inv;
+        
+        // velocity in normal direction from Riemann invariant, tangential velocity from interior
+        let u_normal_ghost = 0.5 * (J_int + J_ext);
+        let a_ghost = max(a_int * 0.1, 0.25 * (J_int - J_ext) * (uni.gamma - 1.0));
+        let rho_ghost = max(1e-6, rho_int * pow(max(1e-6, a_ghost / a_int), 2.0 * gammaMinus1Inv));
+
+        // combine tangential velocity with normal velocity from Riemann
+        let vel_ghost = (u_normal_ghost - u_normal_int) * normal + u_int;
+        let rhoE_ghost = max(1e-6, (rho_ghost * a_ghost * a_ghost) / uni.gamma) * gammaMinus1Inv + 0.5 * rho_ghost * dot(vel_ghost, vel_ghost);
+
+        ghostState = vec4f(rho_ghost, vel_ghost * rho_ghost, rhoE_ghost); // Riemann invariant for normal velocity, copy tangential momentum from interior
+      } else if (M_inf2 > 1.0) {
+        let P_int = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) * (uni.gamma - 1.0);
+        let a2inv = rho_int / (uni.gamma * P_int);
+        let M_int = dot(u_int, u_int) * a2inv;
+        let ambientRhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * rho_int * dot(u_int, u_int); //dot(uni.inflowV, uni.inflowV)
+        ghostState = vec4f(interiorState.xyz, ambientRhoE); // fix pressure to ambient for M < 1.0
+      } else {
+        // supersonic outflow, copy interior state
+        ghostState = interiorState;
+      }
       if (gid.y == simDomain.y + 2) {
         ghostState = 2.0 * ghostState - interiorState; // for 2nd order extrapolation in muscl
       }
@@ -360,14 +392,18 @@ fn main(
   let Q_Rprimitive = toPrimitive(Q_R);
   let Q_R2primitive = toPrimitive(Q_R2);
 
-  // MUSCL
-  let delta_L = Q_Lprimitive - Q_L2primitive;
-  let delta_Face = Q_Rprimitive - Q_Lprimitive;
-  let delta_R = Q_R2primitive - Q_Rprimitive;
-  let r_L = (delta_L * delta_Face + epsilon) / (delta_Face * delta_Face + epsilon);
-  let r_R = (delta_Face * delta_R + epsilon) / (delta_R * delta_R + epsilon);
-  var Q_LMUSCLprimitive = Q_Lprimitive + 0.5 * vanLeerLimiter(r_L) * (delta_Face);
-  var Q_RMUSCLprimitive = Q_Rprimitive - 0.5 * vanLeerLimiter(r_R) * (delta_R);
+  var Q_LMUSCLprimitive = Q_Lprimitive;
+  var Q_RMUSCLprimitive = Q_Rprimitive;
+  if (uni.muscl > 0) {
+    // MUSCL
+    let delta_L = Q_Lprimitive - Q_L2primitive;
+    let delta_Face = Q_Rprimitive - Q_Lprimitive;
+    let delta_R = Q_R2primitive - Q_Rprimitive;
+    let r_L = (delta_L * delta_Face + epsilon) / (delta_Face * delta_Face + epsilon);
+    let r_R = (delta_Face * delta_R + epsilon) / (delta_R * delta_R + epsilon);
+    Q_LMUSCLprimitive += 0.5 * vanLeerLimiter(r_L) * (delta_Face);
+    Q_RMUSCLprimitive -= 0.5 * vanLeerLimiter(r_R) * (delta_R);
+  }
 
   // interface states, with u = velocity normal to face
   // left state
@@ -613,14 +649,14 @@ ${uni.uniformStruct}
 @group(0) @binding(1) var state: texture_2d<f32>;   // rgba32float
 @group(0) @binding(2) var faceLengths: texture_2d<f32>;   // rgba32float
 @group(0) @binding(3) var area: texture_2d<f32>;   // r32float
-@group(0) @binding(4) var vis: texture_storage_2d<rg11b10ufloat, write>; // rgba32float
+@group(0) @binding(4) var vis: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(5) var<storage, read_write> waveSpeeds: array<f32>;
 
 override WG_X: u32;
 override WG_Y: u32;
 
 fn colorMapBRYW(value: f32) -> vec4f {
-  return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate((value - 2.0) * 0.5), 1.0);
+  return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate((value - 2.0) * 0.5), value / 8.0);
 }
 
 @compute @workgroup_size(WG_X, WG_Y)
@@ -669,14 +705,14 @@ fn main(
       let gradMag = length(vec2f(gradX, gradY));
       color = vec4f(exp(-gradMag * 2.0));
     } else {
-      let vorticity = (stateUp.y / stateUp.x - stateDown.y / stateDown.x) - (stateRight.y / stateRight.x - stateLeft.y / stateLeft.x);
+      let vorticity = (stateRight.y - stateLeft.y) - (stateUp.x - stateDown.x); // dv/dx - du/dy, central difference with ghost cells
       color = vec4f(colorMapBRYW(vorticity * 0.5 + 0.5));
     }
     textureStore(vis, gid.xy, color);
     return;
-  } else if (uni.simDisplayMode == 6) {
-    let velND = abs(velocity) / (inVelMag); // non-dimensionalize velocity by inflow velocity for visualization
-    textureStore(vis, gid.xy, vec4f(velND.x, 0.0, velND.y, 1.0));
+  } else if (uni.simDisplayMode == 7) {
+    let velND = abs(velocity) / inVelMag; // non-dimensionalize velocity by inflow velocity for visualization
+    textureStore(vis, gid.xy, vec4f(velND.x, 0.0, velND.y, length(velND)));
     return;
   }
   var localValue: f32;
@@ -696,13 +732,17 @@ fn main(
     }
     case 5: {
       localValue = mach;
+      freeStreamValue = 1.0;
+    }
+    case 6: {
+      localValue = speed;
       freeStreamValue = inMach;
     }
-    case 7: {
+    case 8: {
       localValue = entropy;
       freeStreamValue = inEntropy;
     }
-    case 8: {    
+    case 9: {    
       let totalPressure = pressure * pow(1.0 + 0.5 * (uni.gamma - 1.0) * mach * mach, uni.gamma / (uni.gamma - 1.0));
       let totalPressureInf = uni.inPressure * pow(1.0 + 0.5 * (uni.gamma - 1.0) * inMach * inMach, uni.gamma / (uni.gamma - 1.0));
       localValue = totalPressure;
@@ -799,17 +839,19 @@ fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
 fn fs(vtx: VertexOut) -> @location(0) vec4f {
   // sample sim state
   let state = textureSample(state, gridSampler, vtx.fragCoord);
-  // return vec4f(vtx.fragCoord, 1.0 - vtx.fragCoord.y, 1.0);
-  // return vec4f(abs(vtx.normal), dot(vtx.normal, vec2f(1.0, 0.0)) * 0.5 + 0.5, 1.0);
-  // return vec4f(abs(state.yz) / (state.x * 5.0), f32(any(state != state)), 0);
+  if (uni.contourLevels > 0) {
+    // let lineSharpness = 1.0;
+    // let contour = fract(state.a * 4.0 * uni.contourLevels);
+    // let edge = smoothstep(0.5 - lineSharpness, 0.5, contour) - 
+    //            smoothstep(0.5, 0.5 + lineSharpness, contour);
+    let plotValue = state.a * uni.contourLevels;
+    // let screenSpaceGradient = fwidthFine(plotValue);
+    let screenSpaceGradient = length(vec2f(dpdxFine(plotValue), dpdyFine(plotValue)));
+    let contourLineWidth = 1.0;
+    let contour = step(contourLineWidth, (0.5 - abs(fract(plotValue) - 0.5)) / (screenSpaceGradient + 1e-6));
+    return mix(state, vec4f(0.0), 1 - contour);
+    return vec4f();
+  }
   return state;
-  // return vec4f(state.x / 2.0);// - f32((state.x * 100.0 % 5.0 <= (0.1)));
-
-  
-  // let rho = state.x;
-  // let vel = length(state.yz / rho);
-  // let p = (state.w - 0.5 * vel * vel * rho) * (uni.gamma - 1.0);
-  // let a = sqrt(uni.gamma * max(p, 1e-7) / max(rho, 1e-7));
-  // return vec4f(vel / a, f32(any(state != state)), 0.0, 1.0);
 }
 `;

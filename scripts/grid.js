@@ -6,7 +6,7 @@ let poissonIterations = 0;
 let maxPoissonIterations = 10000;
 let gridFinalized = false;
 
-const simulationDomain = [512, 256]; // circumferential * radial for o grid
+const simulationDomain = [512, 512]; // circumferential * radial for o grid
 const gridVertexCount = [(simulationDomain[0]), (simulationDomain[1] + 1)];
 const xFluxTexSize = [(simulationDomain[0] + 1), (simulationDomain[1])];
 const yFluxTexSize = [(simulationDomain[0]), (simulationDomain[1] + 1)];
@@ -71,7 +71,7 @@ function generateCircularOuterBoundary(t) {
   const y = Math.sin(t * Math.PI * 2);
   return [x, y];
 }
-function generateSquareOuterBoundary(t, lengthRatio) {
+function generateRectangularOuterBoundary(t, lengthRatio) {
   t /= gridVertexCount[0];
   t = (t + 0.125) % 1; // rotate to align with object boundary
   if (t < 0.25) {
@@ -89,9 +89,9 @@ function generateSquareOuterBoundary(t, lengthRatio) {
     return [(t*2-1) * lengthRatio, -1];
   }
 }
-const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.2, 400, 0.1, -0.7));
-// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4405, 0.2, -0.7));
-const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSquareOuterBoundary(t, 1.5));
+const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, -0.7));
+// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 115, 0.2, -0.7));
+const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));
 for (let x = 0; x < gridVertexCount[0]; x++) {
   const i = vtxIdx(x, 0);
   gridVtxData[i] = objectCoords[x][0];
