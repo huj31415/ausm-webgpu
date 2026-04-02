@@ -497,17 +497,19 @@ texture-formats-tier1: ${textureTier1}
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
-    actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
-    const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
-    uni.values.inflowV.set(inflowFinal);
-    const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
-    uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
+    const run = dt > 0;
+    if (run) {
+      actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
+      const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
+      uni.values.inflowV.set(inflowFinal);
+      const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
+      uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
+    }
 
     uni.update(device.queue);
 
     const encoder = device.createCommandEncoder();
 
-    const run = dt > 0;
 
     // move out of render loop
     if (prepareGrid) {

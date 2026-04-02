@@ -220,8 +220,8 @@ fn main(
     let rho_int = interiorState.x;
     let u_int = interiorState.yz / rho_int;
     let ghost_U = reflect(u_int, normal); // reflect velocity across normal
-    let rhoE = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) + 0.5 * rho_int * dot(ghost_U, ghost_U);
-    ghostState = vec4f(rho_int, ghost_U * rho_int, rhoE); // reflect velocity, keep other states, apply new rhoE
+    // let rhoE = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) + 0.5 * rho_int * dot(ghost_U, ghost_U);
+    ghostState = vec4f(rho_int, ghost_U * rho_int, interiorState.w); // reflect velocity, keep other states, KE doesn't change
   } else if (gid.y > simDomain.y) {
     // handle outer boundary
     let interiorState = textureLoad(stateIn, vec2u(gid.x, simDomain.y), 0);
@@ -231,9 +231,7 @@ fn main(
     let boundaryInOrOut = dot(normal, uni.inflowV); // negative for inflow, positive for outflow
     if(boundaryInOrOut < 0.0) {
       // inflow
-      // rho * E = p / (uni.gamma - 1) + 0.5 * rho * (u^2 + v^2)
-      // let rhoE = uni.inPressure / ((uni.gamma - 1.0) * uni.inRho) + 0.5 * dot(uni.inflowV, uni.inflowV);
-      ghostState = uni.inState; //uni.inRho * vec4f(1, uni.inflowV, rhoE); // rho, rho*u, rho*v, rho*E
+      ghostState = uni.inState;
     } else {
       // outflow
       let gammaMinus1Inv = 1.0 / (uni.gamma - 1.0);
@@ -264,10 +262,7 @@ fn main(
 
         ghostState = vec4f(rho_ghost, vel_ghost * rho_ghost, rhoE_ghost); // Riemann invariant for normal velocity, copy tangential momentum from interior
       } else if (M_inf2 > 1.0) {
-        let P_int = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) * (uni.gamma - 1.0);
-        let a2inv = rho_int / (uni.gamma * P_int);
-        let M_int = dot(u_int, u_int) * a2inv;
-        let ambientRhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * rho_int * dot(u_int, u_int); //dot(uni.inflowV, uni.inflowV)
+        let ambientRhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * rho_int * u_int2; //dot(uni.inflowV, uni.inflowV)
         ghostState = vec4f(interiorState.xyz, ambientRhoE); // fix pressure to ambient for M < 1.0
       } else {
         // supersonic outflow, copy interior state
@@ -346,7 +341,8 @@ fn P_5(M: f32, alpha: f32, plusOrMinus: f32) -> f32 {
 }
 
 fn vanLeerLimiter(r: vec4f) -> vec4f {
-  return (r + abs(r)) / (1.0 + abs(r));
+  let absR = abs(r);
+  return (r + absR) / (1.0 + absR);
 }
 
 fn minmod(a: f32, b: f32) -> f32 {
@@ -358,10 +354,13 @@ fn vanAlbadaLimiter(r: vec4f) -> vec4f {
   return (r2 + r) / (r2 + 1.0);
 }
 
+
 @compute @workgroup_size(WG_X, WG_Y)
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
+  let gammaMinus1 = (uni.gamma - 1.0);
+
   let cellIdx = vec2i(gid.xy);
   let boundary = textureLoad(gridBoundaries, gid.xy, 0).xy;
 
@@ -412,7 +411,7 @@ fn main(
   let u_L = dot(vel_L, normal);
 
   let p_L = Q_LMUSCLprimitive.w;
-  let h_L = p_L / ((uni.gamma - 1.0) * rho_L) + 0.5 * dot(vel_L, vel_L) + p_L / rho_L;
+  let h_L = p_L / (gammaMinus1 * rho_L) + 0.5 * dot(vel_L, vel_L) + p_L / rho_L;
 
   // right state
   let rho_R = Q_RMUSCLprimitive.x;
@@ -420,11 +419,11 @@ fn main(
   let u_R = dot(vel_R, normal);
 
   let p_R = Q_RMUSCLprimitive.w;
-  let h_R = p_R / ((uni.gamma - 1.0) * rho_R) + 0.5 * dot(vel_R, vel_R) + p_R / rho_R;
+  let h_R = p_R / (gammaMinus1 * rho_R) + 0.5 * dot(vel_R, vel_R) + p_R / rho_R;
 
   // more accurate
   let h_t_interface = 0.5 * (h_L + h_R); // total enthalpy
-  let aStar = sqrt(max(1e-6, 2 * (uni.gamma - 1.0) / (uni.gamma + 1) * h_t_interface)); // eq 29
+  let aStar = sqrt(max(1e-6, 2 * gammaMinus1 / (uni.gamma + 1) * h_t_interface)); // eq 29
   let aHat_L = aStar * aStar / max(u_L, aStar); // eq 30
   let aHat_R = aStar * aStar / max(-u_R, aStar);
   let a_interface = min(aHat_L, aHat_R); // eq 28
@@ -595,7 +594,7 @@ fn main(
 // Full reduction in 1 dispatch
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // need to clear each frame: device.queue.writeBuffer(cflOutBuffer, 0, new Uint32Array([0x7F7FFFFF]));
-// read as let dt = bitcast<f32>(cfl) * uni.cflFactor;
+// read as let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
 const cflReductionShaderCode = /* wgsl */`
 ${uni.uniformStruct}
 
@@ -656,7 +655,7 @@ override WG_X: u32;
 override WG_Y: u32;
 
 fn colorMapBRYW(value: f32) -> vec4f {
-  return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate((value - 2.0) * 0.5), value / 8.0);
+  return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate(2.0 * (value - 1.0) / value - 1.0), value / (value + 1.5704)); // atan(value) / 1.5708);//
 }
 
 @compute @workgroup_size(WG_X, WG_Y)
@@ -667,7 +666,6 @@ fn main(
 
   let state0 = textureLoad(state, gid.xy + vec2u(0, 1), 0); // shift up by 1 to account for ghost cells
   let rho = state0.x;
-  let adjRho = rho / (2 * uni.inRho);
   let inVelMag = length(uni.inflowV);
   let velocity = state0.yz / rho;
   let pressure = (state0.w - 0.5 * rho * dot(velocity, velocity)) * (uni.gamma - 1.0);
@@ -675,10 +673,6 @@ fn main(
   let inTemp = uni.inPressure / uni.inRho;
   let a = sqrt(uni.gamma * temperature);
   let speed = length(velocity);
-  let mach = speed / a;
-  let inMach = inVelMag / sqrt(uni.gamma * inTemp);
-  let entropy = log(pressure / pow(rho, uni.gamma));
-  let inEntropy = log(uni.inPressure / pow(uni.inRho, uni.gamma));
 
   let faceLengths = textureLoad(faceLengths, gid.xy, 0);
   let area = textureLoad(area, gid.xy, 0).x;
@@ -705,7 +699,7 @@ fn main(
       let gradMag = length(vec2f(gradX, gradY));
       color = vec4f(exp(-gradMag * 2.0));
     } else {
-      let vorticity = (stateRight.y - stateLeft.y) - (stateUp.x - stateDown.x); // dv/dx - du/dy, central difference with ghost cells
+      let vorticity = (stateRight.z / stateRight.x - stateLeft.z / stateLeft.x) - (stateUp.y / stateUp.x - stateDown.y / stateDown.x); // dv/dx - du/dy, central difference with ghost cells
       color = vec4f(colorMapBRYW(vorticity * 0.5 + 0.5));
     }
     textureStore(vis, gid.xy, color);
@@ -730,19 +724,17 @@ fn main(
       localValue = pressure;
       freeStreamValue = uni.inPressure;
     }
-    case 5: {
-      localValue = mach;
-      freeStreamValue = 1.0;
-    }
-    case 6: {
-      localValue = speed;
-      freeStreamValue = inMach;
+    case 5,6: {
+      localValue = speed / a;
+      freeStreamValue = select(1.0, inVelMag / sqrt(uni.gamma * inTemp), uni.simDisplayMode == 6);
     }
     case 8: {
-      localValue = entropy;
-      freeStreamValue = inEntropy;
+      localValue = log(pressure / pow(rho, uni.gamma));
+      freeStreamValue = log(uni.inPressure / pow(uni.inRho, uni.gamma));
     }
-    case 9: {    
+    case 9: {
+      let mach = speed / a;
+      let inMach = inVelMag / sqrt(uni.gamma * inTemp);
       let totalPressure = pressure * pow(1.0 + 0.5 * (uni.gamma - 1.0) * mach * mach, uni.gamma / (uni.gamma - 1.0));
       let totalPressureInf = uni.inPressure * pow(1.0 + 0.5 * (uni.gamma - 1.0) * inMach * inMach, uni.gamma / (uni.gamma - 1.0));
       localValue = totalPressure;
@@ -840,17 +832,14 @@ fn fs(vtx: VertexOut) -> @location(0) vec4f {
   // sample sim state
   let state = textureSample(state, gridSampler, vtx.fragCoord);
   if (uni.contourLevels > 0) {
-    // let lineSharpness = 1.0;
-    // let contour = fract(state.a * 4.0 * uni.contourLevels);
-    // let edge = smoothstep(0.5 - lineSharpness, 0.5, contour) - 
-    //            smoothstep(0.5, 0.5 + lineSharpness, contour);
-    let plotValue = state.a * uni.contourLevels;
+    // https://observablehq.com/@rreusser/locally-scaled-domain-coloring-part-1-contour-plots#contours
+    // let plotValue = tan(state.a * 1.5708) * uni.contourLevels;
+    let plotValue = 1.5708 * state.a / (1.0 - state.a) * uni.contourLevels;
     // let screenSpaceGradient = fwidthFine(plotValue);
     let screenSpaceGradient = length(vec2f(dpdxFine(plotValue), dpdyFine(plotValue)));
     let contourLineWidth = 1.0;
     let contour = step(contourLineWidth, (0.5 - abs(fract(plotValue) - 0.5)) / (screenSpaceGradient + 1e-6));
     return mix(state, vec4f(0.0), 1 - contour);
-    return vec4f();
   }
   return state;
 }

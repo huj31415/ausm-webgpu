@@ -38,6 +38,8 @@ const storage = {
   gridBoundaries: null,   // r32sint   (M+1)x(N+1)  boundary conditions and indices of connections between nonadjacent cells for each vertex
                           //                        positive: index of connected cell, otherwise: type of boundary (-1: object, -2: domain outer boundary (derive inflow and outflow from normal direction))//-2: inlet, -4: outlet)
                           // replace with linear indices for 4 sides if no boundaries inside domain?
+  faceLengths: null,      // rgba32float (M)x(N)    lengths of cell faces, used for flux calculations and visualization
+  cellDistances: null,    // rgba32float (M)x(N)    distances from cell centers to adjacent cell centers
 
   // rgbafloat32 (M)x(N+3) rho, rho*u, rho*v, rho*E
   state0: null,
@@ -50,6 +52,13 @@ const storage = {
 
   // residuals
   residual: null, // (M)x(N)
+
+  // CFL
+  waveSpeeds: null, // rgba32float (M)x(N)
+  maxWaveSpeed: null, // 1*u32 for dt
+
+  // visualization
+  vis: null, // (M)x(N)
 }
 
 let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = cflTime = 0;
@@ -144,7 +153,7 @@ gui.addNumericInput("K_u", true, "K_u", { min: 0, max: 1, step: 0.01, val: K_u, 
   uni.values.K_u.set([value]);
 });
 gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "sim", (value) => {
-  uni.values.contourLevels.set([4 * value]);
+  uni.values.contourLevels.set([value]);
 });
 gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => {
   uni.values.muscl.set([value ? 1 : 0]);

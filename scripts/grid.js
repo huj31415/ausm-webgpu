@@ -47,6 +47,15 @@ function generateNACA4Boundary(t, naca4, size=1.0, xOffset=0) {
   // return points in counterclockwise order starting from trailing edge
   return (t <= 1) ? airfoilUpper(1 - t) : airfoilLower(t - 1);
 }
+function generateSearsHaackBoundary(t, V = 0.2, L = 10, xOffset = -0.7) {
+  t /= (gridVertexCount[0] / 2);
+  const r = (x) => 8 / Math.PI * Math.sqrt(2 * V / (3 * L)) * (x * (1 - x))**(3/4);
+  if (t < 1) {
+    return [L * (-t) + xOffset, r(t)];
+  }
+  t -= 1;
+  return [L * (t-1) + xOffset, -r(t)];
+}
 
 // loop through boundaries
 // O grid: n points fixed by domain x size
@@ -90,6 +99,7 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
   }
 }
 const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, -0.7));
+// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 115, 0.2, -0.7));
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));
 for (let x = 0; x < gridVertexCount[0]; x++) {
