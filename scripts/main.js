@@ -141,20 +141,6 @@ texture-formats-tier1: ${textureTier1}
   // });
 
 
-  device.queue.writeTexture(
-    { texture: storage.gridPoints0 },
-    gridVtxData,
-    { offset: 0, bytesPerRow: gridVertexCount[0] * 8, rowsPerImage: gridVertexCount[1] },
-    { width: gridVertexCount[0], height: gridVertexCount[1] },
-  );
-  device.queue.writeTexture(
-    { texture: storage.gridBoundaries },
-    gridBoundaryData,
-    { offset: 0, bytesPerRow: gridVertexCount[0] * 4, rowsPerImage: gridVertexCount[1] },
-    { width: gridVertexCount[0], height: gridVertexCount[1] },
-  );
-
-
   const uniformBuffer = uni.createBuffer(device);
 
   const newComputePipeline = (shaderCode, name, layout = "auto") =>
@@ -212,7 +198,6 @@ texture-formats-tier1: ${textureTier1}
       { binding: 3, resource: storage.gridArea.createView() },
       { binding: 4, resource: storage.faceLengths.createView() },
       { binding: 5, resource: storage.cellDistances.createView() },
-      { binding: 6, resource: storage.state0.createView() },
     ],
     label: "grid finalize compute bind group"
   });
@@ -220,6 +205,15 @@ texture-formats-tier1: ${textureTier1}
     gridFinalizeBindGroup(storage.gridPoints1),
     gridFinalizeBindGroup(storage.gridPoints0),
   ];
+  const prepareStateComputePipeline = newComputePipeline(prepareStateShaderCode, "prepare state");
+  const prepareStateBindGroup = device.createBindGroup({
+    layout: prepareStateComputePipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuffer } },
+      { binding: 1, resource: storage.state0.createView() },
+    ],
+    label: "prepare state compute bind group"
+  });
 
   const boundaryComputePipeline = newComputePipeline(boundaryShaderCode, "boundary condition");
   const boundaryBindGroup = (stateIn, stateOut) => device.createBindGroup({
@@ -304,7 +298,7 @@ texture-formats-tier1: ${textureTier1}
       newComputePipeline(AUSMup_horizontalFluxShaderCode, "AUSM+-up horizontal flux", fluxPipelineLayout)
     ],
   });
-  let [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
+  let [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines.SLAU2;
   const verticalFluxBindGroup = (state) => device.createBindGroup({
     layout: fluxBindGroupLayout,
     entries: [
@@ -529,7 +523,6 @@ texture-formats-tier1: ${textureTier1}
     Math.ceil(texSize[1] / wg_y)
   ];
 
-  let pingPongIndex = 0;
 
   function createComputePass(pass, pipeline, bindGroup, dispatchSize = wgDispatchSize(simulationDomain)) {
     pass.setPipeline(pipeline);
@@ -547,12 +540,84 @@ texture-formats-tier1: ${textureTier1}
     });
   });
 
+  updateSolver = (solver) => {
+    [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
+  }
+
+  prepareState = () => {
+    uni.update(device.queue);
+    const encoder = device.createCommandEncoder();
+
+    createComputePass(encoder.beginComputePass(), prepareStateComputePipeline, prepareStateBindGroup, wgDispatchSize(simulationDomain));
+    encoder.copyTextureToTexture(
+      { texture: storage.state0 },
+      { texture: storage.state1 },
+      totalCellCount
+    );
+    encoder.copyTextureToTexture(
+      { texture: storage.state0 },
+      { texture: storage.state2 },
+      totalCellCount
+    );
+    device.queue.submit([encoder.finish()]);
+    actualInflowVel = 0;
+  }
+
+  // todo: check residuals after every n iterations and stop if converged
+  prepareGrid = () => {
+    poissonIterations = 0;
+    let pingPongIndex = 0;
+    
+    uni.update(device.queue);
+    
+    // write boundaries
+    device.queue.writeTexture(
+      { texture: storage.gridPoints0 },
+      gridVtxData,
+      { offset: 0, bytesPerRow: gridVertexCount[0] * 8, rowsPerImage: gridVertexCount[1] },
+      { width: gridVertexCount[0], height: gridVertexCount[1] },
+    );
+    device.queue.writeTexture(
+      { texture: storage.gridBoundaries },
+      gridBoundaryData,
+      { offset: 0, bytesPerRow: gridVertexCount[0] * 4, rowsPerImage: gridVertexCount[1] },
+      { width: gridVertexCount[0], height: gridVertexCount[1] },
+    );
+
+    const encoder = device.createCommandEncoder();
+
+    // create initial guess using linear interpolation
+    createComputePass(encoder.beginComputePass(), gridInterpolationComputePipeline, gridInterpolationBindGroup, wgDispatchSize(gridVertexCount));
+    encoder.copyTextureToTexture(
+      { texture: storage.gridPoints1 },
+      { texture: storage.gridPoints0 },
+      gridVertexCount
+    );
+    // iteratively solve elliptic Poisson equation to smooth the grid
+    for (let i = 0; i < maxPoissonIterations; i++) {
+      createComputePass(encoder.beginComputePass(), gridEllipticPoissonComputePipeline, gridEllipticPoissonBindGroups[pingPongIndex], wgDispatchSize(gridVertexCount));
+      pingPongIndex = 1 - pingPongIndex;
+    }
+    poissonIterations = maxPoissonIterations;
+
+    // finalize grid by computing cell areas, face lengths, and cell distances
+    createComputePass(encoder.beginComputePass(), gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], wgDispatchSize(simulationDomain));
+    // pingPongIndex = 1 - pingPongIndex;
+
+    device.queue.submit([encoder.finish()]);
+    prepareState();
+  }
+
+  prepareGrid();
+
 
   function render() {
+    // update performance info
     const startTime = performance.now();
     deltaTime += Math.min(startTime - lastFrameTime - deltaTime, 1e4) / filterStrength;
     fps += (1e3 / deltaTime - fps) / filterStrength;
 
+    // adaptive time stepping: adjust stepsPerFrame based on how long the last frame took compared to the target frame time
     const timeDifference = (startTime - lastFrameTime) - targetFrameTime;
     stepsPerFrame = Math.max(1, Math.round(stepsPerFrame - Math.min(100, timeDifference) * 0.05));
     if (timeDifference < -1) stepsPerFrame += 1;
@@ -561,57 +626,12 @@ texture-formats-tier1: ${textureTier1}
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
-    const run = dt > 0;
-    if (run) {
-      actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
-      const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
-      uni.values.inflowV.set(inflowFinal);
-      const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
-      uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
-    }
-    if (solverChanged) {
-      [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
-      solverChanged = false;
-    }
+    const encoder = device.createCommandEncoder();
 
     uni.update(device.queue);
 
-    const encoder = device.createCommandEncoder();
-
-
-    // move out of render loop
-    if (prepareGrid) {
-      createComputePass(encoder.beginComputePass(), gridInterpolationComputePipeline, gridInterpolationBindGroup, wgDispatchSize(gridVertexCount));
-      encoder.copyTextureToTexture(
-        { texture: storage.gridPoints1 },
-        { texture: storage.gridPoints0 },
-        gridVertexCount
-      );
-      prepareGrid = false;
-    }
-    if (runPoisson && poissonIterations < maxPoissonIterations) {
-      for (let i = 0; i < poissonIterationsPerFrame; i++) {
-        createComputePass(encoder.beginComputePass(), gridEllipticPoissonComputePipeline, gridEllipticPoissonBindGroups[pingPongIndex], wgDispatchSize(gridVertexCount));
-        pingPongIndex = 1 - pingPongIndex;
-      }
-      poissonIterations += poissonIterationsPerFrame;
-    }
-    if (poissonIterations >= maxPoissonIterations && !gridFinalized) {
-      gridFinalized = true;
-      createComputePass(encoder.beginComputePass(), gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], wgDispatchSize(simulationDomain));
-      encoder.copyTextureToTexture(
-        { texture: storage.state0 },
-        { texture: storage.state1 },
-        totalCellCount
-      );
-      encoder.copyTextureToTexture(
-        { texture: storage.state0 },
-        { texture: storage.state2 },
-        totalCellCount
-      );
-      pingPongIndex = 1 - pingPongIndex;
-    }
-    if (gridFinalized && run) {
+    // simulate
+    if (dt > 0) {
       for (let step = 0; step < stepsPerFrame; step++) {
         // state2 -> state0 (Qn)
         createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
@@ -646,6 +666,14 @@ texture-formats-tier1: ${textureTier1}
         // state0 (Qn), state1 (Q2) + residual -> state2 (Qn+1)
         createComputePass(encoder.beginComputePass(), integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
       }
+      
+      // update inflow velocity, will be 1 frame behind
+      actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
+      const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
+      uni.values.inflowV.set(inflowFinal);
+      // compute inflow state
+      const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
+      uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
     }
 
     createComputePass(postprocessingTimingHelper.beginComputePass(encoder), visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));

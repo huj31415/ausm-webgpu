@@ -121,7 +121,6 @@ ${uni.uniformStruct}
 @group(0) @binding(3) var gridArea: texture_storage_2d<r32float, write>;
 @group(0) @binding(4) var faceLengths: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(5) var cellDistances: texture_storage_2d<rgba32float, write>;
-@group(0) @binding(6) var state: texture_storage_2d<rgba32float, write>;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -130,11 +129,6 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  
-  let gamma = 1.4;
-  let inPressure = 1.0 / gamma;
-  let inRho = 1.0;
-
   let boundary = textureLoad(gridBoundaries, gid.xy, 0).x;
 
   let rightIdx = (gid.x + 1) % u32(uni.simDomain.x);
@@ -173,8 +167,23 @@ fn main(
   let downDist = length(cellCenter - downCenter);
 
   textureStore(cellDistances, gid.xy, vec4f(leftDist, rightDist, upDist, downDist));
+}
+`;
 
-  // initialize interior state to air at rest, leave rest to boundary shader
+const prepareStateShaderCode = /* wgsl */`
+${uni.uniformStruct}
+
+@group(0) @binding(0) var<uniform> uni: Uniforms;
+@group(0) @binding(1) var state: texture_storage_2d<rgba32float, write>;
+
+override WG_X: u32;
+override WG_Y: u32;
+
+@compute @workgroup_size(WG_X, WG_Y)
+fn main(
+  @builtin(global_invocation_id) gid: vec3u
+) {
+  // initialize interior state to air at rest
   let rhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * uni.inRho * 0.0;
   textureStore(state, gid.xy + vec2u(0, 1), vec4f(uni.inRho, 0.0, 0.0, rhoE));
 }
@@ -326,6 +335,11 @@ fn vanAlbadaLimiter(r: vec4f) -> vec4f {
 }
 `;
 
+// common to all flux calculations
+// run for each face, Mx(N+1) for vertical faces, (M+1)xN for horizontal faces
+// vertical flux calculated for face between (x, y) and (x, y+1), horizontal flux calculated for face between (x, y) and (x+1, y)
+// vertical - face at a given index is below cell at that index (using shifted index for ghost cells)
+// calculate face normal and left/right rho, u, u_normal, p, h
 const fluxInterfaceStateCode = (vertical) => /* wgsl */`
   let gammaMinus1 = (uni.gamma - 1.0);
 
@@ -387,11 +401,8 @@ const fluxInterfaceStateCode = (vertical) => /* wgsl */`
   let h_R = p_R / (gammaMinus1 * rho_R) + 0.5 * dot(vel_R, vel_R) + p_R / rho_R;
 `;
 
-// calculate fluxes at cell faces based on sim state and grid geometry
-// run for each face, Mx(N+1) for vertical faces, (M+1)xN for horizontal faces
-// vertical flux calculated for face between (x, y) and (x, y+1), horizontal flux calculated for face between (x, y) and (x+1, y)
-// vertical - face at a given index is below cell at that index (using shifted index for ghost cells)
-// "A sequel to AUSM, Part II: AUSM+-up for all speeds", Liou, sec. 3.3
+// "A sequel to AUSM, Part II: AUSM+-up for all speeds", Liou 2006, sec. 3.3
+// https://www.sciencedirect.com/science/article/pii/S0021999105004274
 const AUSMupFluxShaderCode = (vertical) => /* wgsl */`
 ${fluxUtilsCode}
 
@@ -497,9 +508,8 @@ fn main(
   let X = (1 - Marc) * (1 - Marc); // eq 2.3d
   let f_p_plus = f_p(M_L, 1);
   let f_p_minus = f_p(M_R, -1);
-  let rho_bar = 0.5 * (rho_L + rho_R);
   let P_interface = ((f_p_plus - f_p_minus) * (p_L - p_R) + ${version == 2
-    ? "(p_L + p_R)) * 0.5 + (Uarc_unclamped * (f_p_plus + f_p_minus - 1) * rho_bar * a_interface); // eq 3.4 SLAU2"
+    ? "(p_L + p_R) + (Uarc_unclamped * (f_p_plus + f_p_minus - 1) * (rho_L + rho_R) * a_interface)) * 0.5; // eq 3.4 SLAU2"
     : "(1.0 + (1 - X) * (f_p_plus + f_p_minus - 1)) * (p_L + p_R)) * 0.5; // eq 2.3c SLAU original"
   }
 
@@ -510,9 +520,9 @@ fn main(
   let ubar_n_minus = mix(ubar_n, abs(u_R), g);
   let mdot = 0.5 * ((rho_L * (u_L + ubar_n_plus) + rho_R * (u_R - ubar_n_minus)) * (1 - g) - X / a_interface * delta_p); // eq 2.3i
 
-  let phi_R = vec4f(1, vel_R, h_R); // eq 3
+  let phi_R = vec4f(1, vel_R, h_R);
   let phi_L = vec4f(1, vel_L, h_L);
-  let convectiveFlux = select(phi_R, phi_L, mdot > 0.0); // eq 6
+  let convectiveFlux = select(phi_R, phi_L, mdot > 0.0);
   let pressureFlux = vec4f(0.0, normal * P_interface, 0.0);
 
   let totalFlux = convectiveFlux * mdot + pressureFlux;
@@ -705,6 +715,9 @@ fn main(
 }
 `;
 
+// visualization shader, run for each cell, read state and other variables to calculate color based on display mode
+// also calculates wave speeds for CFL condition and stores in buffer for reduction
+// run once per frame after state update
 const visualizationShaderCode = /* wgsl */`
 ${uni.uniformStruct}
 
@@ -738,6 +751,7 @@ fn main(
   let a = sqrt(uni.gamma * temperature);
   let speed = length(velocity);
 
+  // calculate wave speed for CFL condition, store in buffer for reduction
   let faceLengths = textureLoad(faceLengths, gid.xy, 0);
   let area = textureLoad(area, gid.xy, 0).x;
   waveSpeeds[gid.x + gid.y * u32(uni.simDomain.x)] = (speed + a) * dot(faceLengths, vec4f(1.0)) / (2.0 * area);
@@ -758,11 +772,13 @@ fn main(
     let stateUp = textureLoad(state, vec2u(gid.x, min(gid.y + 2, u32(uni.simDomain.y) - 1)), 0);
 
     if (uni.simDisplayMode == 0) {
+      // numerical schlieren
       let gradX = (stateRight.x - stateLeft.x); // / (distances.x + distances.y);
       let gradY = (stateUp.x - stateDown.x); // / (distances.z + distances.w);
       let gradMag = length(vec2f(gradX, gradY));
       color = vec4f(exp(-gradMag * 2.0));
     } else {
+      // vorticity
       let vorticity = (stateRight.z / stateRight.x - stateLeft.z / stateLeft.x) - (stateUp.y / stateUp.x - stateDown.y / stateDown.x); // dv/dx - du/dy, central difference with ghost cells
       color = vec4f(colorMapBRYW(vorticity * 0.5 + 0.5));
     }
@@ -770,7 +786,7 @@ fn main(
     return;
   } else if (uni.simDisplayMode == 7) {
     let velND = abs(velocity) / inVelMag; // non-dimensionalize velocity by inflow velocity for visualization
-    textureStore(vis, gid.xy, vec4f(velND.x, 0.0, velND.y, length(velND)));
+    textureStore(vis, gid.xy, vec4f(velND.x, 0.0, velND.y, speed / (speed + 1.5704)));
     return;
   }
   var localValue: f32;

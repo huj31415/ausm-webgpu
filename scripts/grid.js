@@ -1,10 +1,13 @@
 
-let prepareGrid = true;
-let runPoisson = true;
-let poissonIterationsPerFrame = 10000;
+// let prepareGrid = true;
+// let runPoisson = true;
+// will be set in main.js
+let prepareGrid = () => {};
+
+// let poissonIterationsPerFrame = 10000;
 let poissonIterations = 0;
 let maxPoissonIterations = 10000;
-let gridFinalized = false;
+// let gridFinalized = false;
 
 const simulationDomain = [512, 512]; // circumferential * radial for o grid
 const gridVertexCount = [(simulationDomain[0]), (simulationDomain[1] + 1)];
@@ -25,6 +28,12 @@ gui.io.gridResY(simulationDomain[1]);
 gui.addDropdown("gridDisplayMode", "Grid display mode", ["full", "mesh", "vertices"], "grid", null, (value) => {
   [gridDisplayMode, numVertices] = gridDisplayProperties[value];
   uni.values.gridDisplayMode.set([gridDisplayMode]);
+});
+gui.addButton("updateGrid", "Update grid", true, "grid", () => {
+  const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
+  updateGridBoundaries(objectCoords);
+  prepareGrid();
+
 });
 
 const gridVtxData = new Float32Array(gridVertexCount[0] * gridVertexCount[1] * 2);
@@ -101,32 +110,36 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
 }
 const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, Math.PI/4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
-// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 115, 0.2, -0.7));
+// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));
-for (let x = 0; x < gridVertexCount[0]; x++) {
-  const i = vtxIdx(x, 0);
-  gridVtxData[i] = objectCoords[x][0];
-  gridVtxData[i + 1] = objectCoords[x][1];
 
-  const objI = vtxIdx(x, gridVertexCount[1] - 1);
-  gridVtxData[objI] = boundaryCoords[x][0];
-  gridVtxData[objI + 1] = boundaryCoords[x][1];
+function updateGridBoundaries(objCoords = objectCoords, boundCoords = boundaryCoords) {
+  for (let x = 0; x < gridVertexCount[0]; x++) {
+    const i = vtxIdx(x, 0);
+    gridVtxData[i] = objCoords[x][0];
+    gridVtxData[i + 1] = objCoords[x][1];
 
-  // if (x < simulationDomain[0]) {
-  //   const i = cellIdx(x, 0);
-  //   const objI = cellIdx(x, simulationDomain[1] - 1);
-  //   gridBoundaryData[i] = -1; // outer wall
-  //   gridBoundaryData[objI] = -2; // object
-  // }
+    const objI = vtxIdx(x, gridVertexCount[1] - 1);
+    gridVtxData[objI] = boundCoords[x][0];
+    gridVtxData[objI + 1] = boundCoords[x][1];
+
+    // if (x < simulationDomain[0]) {
+    //   const i = cellIdx(x, 0);
+    //   const objI = cellIdx(x, simulationDomain[1] - 1);
+    //   gridBoundaryData[i] = -1; // outer wall
+    //   gridBoundaryData[objI] = -2; // object
+    // }
+  }
+
+  // add O grid connections to boundary texture
+  for (let y = 0; y < gridVertexCount[1]; y++) {
+    const leftBoundary = vtxIdx(0, y);
+    const rightBoundary = vtxIdx(gridVertexCount[0] - 1, y);
+    gridBoundaryData[leftBoundary] = gridVertexCount[0] - 1;
+    gridBoundaryData[leftBoundary + 1] = y;
+    gridBoundaryData[rightBoundary] = 0;
+    gridBoundaryData[rightBoundary + 1] = y;
+  }
+  // need solution for corners - 
 }
-
-// add O grid connections to boundary texture
-for (let y = 0; y < gridVertexCount[1]; y++) {
-  const leftBoundary = vtxIdx(0, y);
-  const rightBoundary = vtxIdx(gridVertexCount[0] - 1, y);
-  gridBoundaryData[leftBoundary] = gridVertexCount[0] - 1;
-  gridBoundaryData[leftBoundary + 1] = y;
-  gridBoundaryData[rightBoundary] = 0;
-  gridBoundaryData[rightBoundary + 1] = y;
-}
-// need solution for corners - 
+updateGridBoundaries();

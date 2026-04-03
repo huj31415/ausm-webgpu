@@ -67,6 +67,9 @@ let dt = 1e-4;
 let oldDt;
 let stepsPerFrame = 70;
 
+// will be set in main.js after pipelines are created
+let prepareState = () => {};
+
 let inflowVel = 3.8;
 let actualInflowVel = 0;
 let velRampUpStrength = 128;
@@ -96,8 +99,9 @@ const solvers = Object.freeze({
   "SLAU": 1,
   "AUSM+-up": 2,
 });
-let solver = "SLAU2";
-let solverChanged = false;
+
+// will be set in main.js after pipelines are created
+let updateSolver = (solver) => {};
 
 let displayMode = simDisplayModes.schlieren;
 uni.values.simDisplayMode.set([displayMode]);
@@ -130,10 +134,7 @@ gui.addDropdown("solver", "Flux solver", ["SLAU2", "SLAU", "AUSM+-up"], "sim", {
   "SLAU2": [],
   "SLAU": [],
   "AUSM+-up": ["K_p", "K_u"],
-}, (value) => {
-  solver = value;
-  solverChanged = true;
-});
+}, (value) => updateSolver(value));
 gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density", "temperature", "pressure", "mach", "mach/m_inf", "velocity", "vorticity", "entropy", "pressureLoss"], "sim", null, (value) => {
   displayMode = simDisplayModes[value];
   uni.values.simDisplayMode.set([displayMode]);
@@ -175,7 +176,7 @@ gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => {
 // gui.addNumericInput("dtPerFrame", true, "dt/frame", { min: 10, max: 500, step: 10, val: stepsPerFrame, float: 0 }, "sim", (value) => {
 //   stepsPerFrame = value;
 // });
-gui.addButton("toggleSim", "Play / Pause", true, "sim", () => {
+gui.addButton("toggleSim", "Play / Pause", false, "sim", () => {
   if (oldDt) {
     dt = oldDt;
     oldDt = null;
@@ -185,6 +186,7 @@ gui.addButton("toggleSim", "Play / Pause", true, "sim", () => {
   }
   uni.values.dt.set([dt]);
 });
+gui.addButton("restart", "Restart", false, "sim", () => prepareState());
 
 gui.addGroup("rendering", "Rendering");
 gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => {
