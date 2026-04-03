@@ -277,12 +277,7 @@ fn main(
 }
 `;
 
-// calculate fluxes at cell faces based on sim state and grid geometry
-// run for each face, Mx(N+1) for vertical faces, (M+1)xN for horizontal faces
-// vertical flux calculated for face between (x, y) and (x, y+1), horizontal flux calculated for face between (x, y) and (x+1, y)
-// vertical - face at a given index is below cell at that index (using shifted index for ghost cells)
-// "A sequel to AUSM, Part II: AUSM+-up for all speeds", Liou, sec. 3.3
-const commonFluxShaderCode = (vertical) => /* wgsl */`
+const fluxUtilsCode = /* wgsl */`
 ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
@@ -316,30 +311,6 @@ fn toConservative(W: vec4f) -> vec4f {
   return vec4f(rho, rho * vel, rhoE);
 }
 
-fn M_1 (M: f32, plusOrMinus: f32) -> f32 {
-  return 0.5 * (M + plusOrMinus * abs(M));
-}
-
-fn M_2 (M: f32, plusOrMinus: f32) -> f32 {
-  return plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus);
-}
-
-fn M_4(M: f32, plusOrMinus: f32) -> f32 {
-  return select(
-    M_1(M, plusOrMinus),
-    M_2(M, plusOrMinus) * (1 - plusOrMinus * 2 * M_2(M, -plusOrMinus)), // beta * 16 = 2
-    abs(M) < 1.0
-  );
-}
-
-fn P_5(M: f32, alpha: f32, plusOrMinus: f32) -> f32 {
-  return select(
-    M_1(M, plusOrMinus) / M,
-    M_2(M, plusOrMinus) * ((plusOrMinus * 2 - M) - plusOrMinus * alpha * M * M_2(M, -plusOrMinus)),
-    abs(M) < 1.0
-  );
-}
-
 fn vanLeerLimiter(r: vec4f) -> vec4f {
   let absR = abs(r);
   return (r + absR) / (1.0 + absR);
@@ -353,21 +324,15 @@ fn vanAlbadaLimiter(r: vec4f) -> vec4f {
   let r2 = r * r;
   return (r2 + r) / (r2 + 1.0);
 }
+`;
 
-
-@compute @workgroup_size(WG_X, WG_Y)
-fn main(
-  @builtin(global_invocation_id) gid: vec3u
-) {
+const fluxInterfaceStateCode = (vertical) => /* wgsl */`
   let gammaMinus1 = (uni.gamma - 1.0);
 
   let cellIdx = vec2i(gid.xy);
   let boundary = textureLoad(gridBoundaries, gid.xy, 0).xy;
 
-  let sigma = 1.0;
   let epsilon = 1e-6;
-
-  let M_inf2 = dot(uni.inflowV, uni.inflowV) / (uni.gamma * uni.inPressure / uni.inRho);
 
   // load current face
   let vtx1 = textureLoad(gridPoints, gid.xy, 0).xy;
@@ -399,9 +364,9 @@ fn main(
     let delta_Face = Q_Rprimitive - Q_Lprimitive;
     let delta_R = Q_R2primitive - Q_Rprimitive;
     let r_L = (delta_L * delta_Face + epsilon) / (delta_Face * delta_Face + epsilon);
-    let r_R = (delta_Face * delta_R + epsilon) / (delta_R * delta_R + epsilon);
-    Q_LMUSCLprimitive += 0.5 * vanLeerLimiter(r_L) * (delta_Face);
-    Q_RMUSCLprimitive -= 0.5 * vanLeerLimiter(r_R) * (delta_R);
+    let r_R = (delta_Face * delta_R + epsilon) / (delta_Face * delta_Face + epsilon); // / delta_R^2
+    Q_LMUSCLprimitive += 0.5 * vanAlbadaLimiter(r_L) * (delta_Face);
+    Q_RMUSCLprimitive -= 0.5 * vanAlbadaLimiter(r_R) * (delta_Face); // * delta_R
   }
 
   // interface states, with u = velocity normal to face
@@ -420,6 +385,47 @@ fn main(
 
   let p_R = Q_RMUSCLprimitive.w;
   let h_R = p_R / (gammaMinus1 * rho_R) + 0.5 * dot(vel_R, vel_R) + p_R / rho_R;
+`;
+
+// calculate fluxes at cell faces based on sim state and grid geometry
+// run for each face, Mx(N+1) for vertical faces, (M+1)xN for horizontal faces
+// vertical flux calculated for face between (x, y) and (x, y+1), horizontal flux calculated for face between (x, y) and (x+1, y)
+// vertical - face at a given index is below cell at that index (using shifted index for ghost cells)
+// "A sequel to AUSM, Part II: AUSM+-up for all speeds", Liou, sec. 3.3
+const AUSMupFluxShaderCode = (vertical) => /* wgsl */`
+${fluxUtilsCode}
+
+fn M_1 (M: f32, plusOrMinus: f32) -> f32 {
+  return 0.5 * (M + plusOrMinus * abs(M));
+}
+
+fn M_2 (M: f32, plusOrMinus: f32) -> f32 {
+  return plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus);
+}
+
+fn M_4(M: f32, plusOrMinus: f32) -> f32 {
+  return select(
+    M_1(M, plusOrMinus),
+    M_2(M, plusOrMinus) * (1 - plusOrMinus * 2 * M_2(M, -plusOrMinus)), // beta * 16 = 2
+    abs(M) < 1.0
+  );
+}
+
+fn P_5(M: f32, alpha: f32, plusOrMinus: f32) -> f32 {
+  return select(
+    M_1(M, plusOrMinus) / M,
+    M_2(M, plusOrMinus) * ((plusOrMinus * 2 - M) - plusOrMinus * alpha * M * M_2(M, -plusOrMinus)),
+    abs(M) < 1.0
+  );
+}
+
+@compute @workgroup_size(WG_X, WG_Y)
+fn main(
+  @builtin(global_invocation_id) gid: vec3u
+) {
+  ${fluxInterfaceStateCode(vertical)}
+  let M_inf2 = dot(uni.inflowV, uni.inflowV) / (uni.gamma * uni.inPressure / rho_L);
+  let sigma = 1.0;
 
   // more accurate
   let h_t_interface = 0.5 * (h_L + h_R); // total enthalpy
@@ -428,7 +434,7 @@ fn main(
   let aHat_R = aStar * aStar / max(-u_R, aStar);
   let a_interface = min(aHat_L, aHat_R); // eq 28
 
-  // let a_interface = (a_L + a_R) / 2.0;
+  // let a_interface = (a_L + a_R) * 0.5;
   let M_L = u_L / a_interface; // eq 69
   let M_R = u_R / a_interface;
   let a_interface2 = a_interface * a_interface;
@@ -456,9 +462,67 @@ fn main(
   textureStore(flux, gid.xy, totalFlux);
 }
 `;
+const AUSMup_verticalFluxShaderCode   = AUSMupFluxShaderCode(true);
+const AUSMup_horizontalFluxShaderCode = AUSMupFluxShaderCode(false);
 
-const verticalFluxShaderCode = commonFluxShaderCode(true);
-const horizontalFluxShaderCode = commonFluxShaderCode(false);
+// Parameter-Free Simple Low-Dissipation AUSM-Family Scheme for All Speeds, Kitamura and Shima 2011
+// https://arc.aiaa.org/doi/pdf/10.2514/1.J050905
+// Towards shock-stable and accurate hypersonic heating computations: A new pressure flux for AUSM-family schemes, Kitamura and Shima 2013
+// https://www.sciencedirect.com/science/article/pii/S0021999113001769
+const SLAUFluxShaderCode = (vertical, version=2) => /* wgsl */`
+${fluxUtilsCode}
+
+fn f_p(M: f32, plusOrMinus: f32) -> f32 {
+  return 0.5 * select(
+    1 + plusOrMinus * sign(M),
+    0.5 * (M + plusOrMinus) * (M + plusOrMinus) * (2 - plusOrMinus * M),
+    abs(M) < 1.0
+  );
+}
+
+@compute @workgroup_size(WG_X, WG_Y)
+fn main(
+  @builtin(global_invocation_id) gid: vec3u
+) {
+  ${fluxInterfaceStateCode(vertical)}
+
+  let a_L = sqrt(uni.gamma * max(p_L, 1e-10) / max(rho_L, 1e-10));
+  let a_R = sqrt(uni.gamma * max(p_R, 1e-10) / max(rho_R, 1e-10));
+  let a_interface = (a_L + a_R) * 0.5;
+  let M_L = u_L / a_interface;
+  let M_R = u_R / a_interface;
+  
+  let Uarc_unclamped = sqrt(0.5 * (dot(vel_L, vel_L) + dot(vel_R, vel_R)));
+  let Marc = min(1.0, Uarc_unclamped / a_interface); // eq 2.3e
+  let X = (1 - Marc) * (1 - Marc); // eq 2.3d
+  let f_p_plus = f_p(M_L, 1);
+  let f_p_minus = f_p(M_R, -1);
+  let rho_bar = 0.5 * (rho_L + rho_R);
+  let P_interface = ((f_p_plus - f_p_minus) * (p_L - p_R) + ${version == 2
+    ? "(p_L + p_R)) * 0.5 + (Uarc_unclamped * (f_p_plus + f_p_minus - 1) * rho_bar * a_interface); // eq 3.4 SLAU2"
+    : "(1.0 + (1 - X) * (f_p_plus + f_p_minus - 1)) * (p_L + p_R)) * 0.5; // eq 2.3c SLAU original"
+  }
+
+  let delta_p = p_R - p_L;
+  let ubar_n = (rho_L * abs(u_L) + rho_R * abs(u_R)) / (rho_L + rho_R); // eq 2.3k
+  let g = saturate(-M_L) * saturate(M_R); // eq 2.3l
+  let ubar_n_plus = mix(ubar_n, abs(u_L), g);
+  let ubar_n_minus = mix(ubar_n, abs(u_R), g);
+  let mdot = 0.5 * ((rho_L * (u_L + ubar_n_plus) + rho_R * (u_R - ubar_n_minus)) * (1 - g) - X / a_interface * delta_p); // eq 2.3i
+
+  let phi_R = vec4f(1, vel_R, h_R); // eq 3
+  let phi_L = vec4f(1, vel_L, h_L);
+  let convectiveFlux = select(phi_R, phi_L, mdot > 0.0); // eq 6
+  let pressureFlux = vec4f(0.0, normal * P_interface, 0.0);
+
+  let totalFlux = convectiveFlux * mdot + pressureFlux;
+  textureStore(flux, gid.xy, totalFlux);
+}
+`;
+const SLAU_verticalFluxShaderCode   = SLAUFluxShaderCode(true, 1);
+const SLAU_horizontalFluxShaderCode = SLAUFluxShaderCode(false, 1);
+const SLAU2_verticalFluxShaderCode   = SLAUFluxShaderCode(true, 2);
+const SLAU2_horizontalFluxShaderCode = SLAUFluxShaderCode(false, 2);
 
 // compute residuals for each cell based on fluxes at faces, run for each cell inside domain
 // residual dQ/dt = -1/area * (F_right - F_left + G_up - G_down)

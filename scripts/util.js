@@ -91,6 +91,14 @@ const simDisplayModes = Object.freeze({
   pressureLoss: 9,
 });
 
+const solvers = Object.freeze({
+  "SLAU2": 0,
+  "SLAU": 1,
+  "AUSM+-up": 2,
+});
+let solver = "SLAU2";
+let solverChanged = false;
+
 let displayMode = simDisplayModes.schlieren;
 uni.values.simDisplayMode.set([displayMode]);
 
@@ -98,7 +106,7 @@ uni.values.simDisplayMode.set([displayMode]);
 const canvas = document.getElementById("canvas");
 let pixelRatio = window.devicePixelRatio || 1;
 
-const gui = new GUI("AUSM+-up compressible fluid sim", canvas);
+const gui = new GUI("AUSM-family compressible fluid sim", canvas);
 
 gui.addGroup("perf", "Performance");
 gui.addStringOutput("res", "Resolution", "", "perf");
@@ -107,17 +115,25 @@ gui.addHalfWidthGroups("perfL", "perfR", "perf");
 gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
 gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
 gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
-// gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfL");
-gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfL");
-gui.addNumericOutput("cflTime", "CFL", "ms", 2, "perfL");
-gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfL");
 gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perfL");
+// gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfL");
+gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfR");
+gui.addNumericOutput("cflTime", "CFL", "ms", 2, "perfR");
+gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfR");
 
 gui.addGroup("grid", "Grid");
 gui.addNDimensionalOutput(["gridResX", "gridResY"], "Grid res", "", ", ", 0, "grid");
 gui.addNumericOutput("poissonIterations", "Poisson iterations", "", 0, "grid");
 
 gui.addGroup("sim", "Simulation");
+gui.addDropdown("solver", "Flux solver", ["SLAU2", "SLAU", "AUSM+-up"], "sim", {
+  "SLAU2": [],
+  "SLAU": [],
+  "AUSM+-up": ["K_p", "K_u"],
+}, (value) => {
+  solver = value;
+  solverChanged = true;
+});
 gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density", "temperature", "pressure", "mach", "mach/m_inf", "velocity", "vorticity", "entropy", "pressureLoss"], "sim", null, (value) => {
   displayMode = simDisplayModes[value];
   uni.values.simDisplayMode.set([displayMode]);
@@ -152,9 +168,6 @@ gui.addNumericInput("K_p", true, "K_p", { min: 0, max: 1, step: 0.01, val: K_p, 
 gui.addNumericInput("K_u", true, "K_u", { min: 0, max: 1, step: 0.01, val: K_u, float: 2 }, "sim", (value) => {
   uni.values.K_u.set([value]);
 });
-gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "sim", (value) => {
-  uni.values.contourLevels.set([value]);
-});
 gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => {
   uni.values.muscl.set([value ? 1 : 0]);
 });
@@ -172,6 +185,13 @@ gui.addButton("toggleSim", "Play / Pause", true, "sim", () => {
   }
   uni.values.dt.set([dt]);
 });
+
+gui.addGroup("rendering", "Rendering");
+gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => {
+  uni.values.contourLevels.set([value]);
+});
+
+gui.updateAllVisibility();
 
 // handle resizing
 window.onresize = window.onload = () => {

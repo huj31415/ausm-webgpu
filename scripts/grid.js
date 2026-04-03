@@ -60,7 +60,7 @@ function generateSearsHaackBoundary(t, V = 0.2, L = 10, xOffset = -0.7) {
 // loop through boundaries
 // O grid: n points fixed by domain x size
 // C grid: n points less than domain x size, remaining points joined together
-function generateObjectBoundary(t, R = 0.2, N = 4, F = 0.1, xOffset = -0.7) {
+function generateObjectBoundary(t, R = 0.2, N = 4, F = 0.1, a = 0, xOffset = -0.7) {
   // normalize to [0, 1]
   t /= gridVertexCount[0];
   t *= 2 * Math.PI;
@@ -69,15 +69,16 @@ function generateObjectBoundary(t, R = 0.2, N = 4, F = 0.1, xOffset = -0.7) {
   // const x = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.cos(t);
   // const y = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.sin(t);
 
-  const r = R / Math.cos((t % (2 * Math.PI / N)) - Math.PI / N);
+  const b = 2 * Math.PI / N;
+  const r = R / Math.cos(((t + a + b) % b) - Math.PI / N);
   const x = r * Math.cos(t) + xOffset;
   const y = r * F * Math.sin(t);
   return [x, y];
 }
-function generateCircularOuterBoundary(t) {
+function generateCircularOuterBoundary(t, radius = 1) {
   t /= gridVertexCount[0];
-  const x = Math.cos(t * Math.PI * 2);
-  const y = Math.sin(t * Math.PI * 2);
+  const x = radius * Math.cos(t * Math.PI * 2);
+  const y = radius * Math.sin(t * Math.PI * 2);
   return [x, y];
 }
 function generateRectangularOuterBoundary(t, lengthRatio) {
@@ -98,7 +99,7 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
     return [(t*2-1) * lengthRatio, -1];
   }
 }
-const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, -0.7));
+const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, Math.PI/4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 115, 0.2, -0.7));
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));

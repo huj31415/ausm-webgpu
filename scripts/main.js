@@ -157,9 +157,9 @@ texture-formats-tier1: ${textureTier1}
 
   const uniformBuffer = uni.createBuffer(device);
 
-  const newComputePipeline = (shaderCode, name) =>
+  const newComputePipeline = (shaderCode, name, layout = "auto") =>
     device.createComputePipeline({
-      layout: 'auto',
+      layout: layout,
       compute: {
         module: device.createShaderModule({
           code: f16header + shaderCode, //(floatPrecision, textureTier2 ? floatPrecision : 32),
@@ -239,9 +239,74 @@ texture-formats-tier1: ${textureTier1}
     boundaryBindGroup(storage.state2, storage.state1),
   ];
 
-  const verticalFluxComputePipeline = newComputePipeline(verticalFluxShaderCode, "vertical flux");
+  const fluxBindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      { // uniform
+        binding: 0,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {
+          type: "uniform",
+          hasDynamicOffset: false,
+        },
+      },
+      { // grid points
+        binding: 1,
+        visibility: GPUShaderStage.COMPUTE,
+        texture: {
+          sampleType: "float",
+          viewDimension: "2d",
+          multisampled: false,
+        },
+      },
+      { // grid boundaries
+        binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        texture: {
+          sampleType: "sint",
+          viewDimension: "2d",
+          multisampled: false,
+        },
+      },
+      { // state
+        binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        texture: {
+          sampleType: "float",
+          viewDimension: "2d",
+          multisampled: false,
+        },
+      },
+      { // flux output
+        binding: 4,
+        visibility: GPUShaderStage.COMPUTE,
+        storageTexture: {
+          access: "write-only",
+          viewDimension: "2d",
+          format: "rgba32float",
+        },
+      },
+    ],
+  });
+  const fluxPipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [ fluxBindGroupLayout ],
+  });
+  const fluxPipelines = Object.freeze({
+    "SLAU2": [
+      newComputePipeline(SLAU2_verticalFluxShaderCode, "SLAU2 vertical flux", fluxPipelineLayout),
+      newComputePipeline(SLAU2_horizontalFluxShaderCode, "SLAU2 horizontal flux", fluxPipelineLayout)
+    ],
+    "SLAU": [
+      newComputePipeline(SLAU_verticalFluxShaderCode, "SLAU vertical flux", fluxPipelineLayout),
+      newComputePipeline(SLAU_horizontalFluxShaderCode, "SLAU horizontal flux", fluxPipelineLayout)
+    ],
+    "AUSM+-up": [
+      newComputePipeline(AUSMup_verticalFluxShaderCode, "AUSM+-up vertical flux", fluxPipelineLayout),
+      newComputePipeline(AUSMup_horizontalFluxShaderCode, "AUSM+-up horizontal flux", fluxPipelineLayout)
+    ],
+  });
+  let [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
   const verticalFluxBindGroup = (state) => device.createBindGroup({
-    layout: verticalFluxComputePipeline.getBindGroupLayout(0),
+    layout: fluxBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.gridPoints0.createView() },
@@ -257,9 +322,8 @@ texture-formats-tier1: ${textureTier1}
     verticalFluxBindGroup(storage.state1),
   ];
 
-  const horizontalFluxComputePipeline = newComputePipeline(horizontalFluxShaderCode, "horizontal flux");
   const horizontalFluxBindGroup = (state) => device.createBindGroup({
-    layout: horizontalFluxComputePipeline.getBindGroupLayout(0),
+    layout: fluxBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: storage.gridPoints0.createView() },
@@ -504,6 +568,10 @@ texture-formats-tier1: ${textureTier1}
       uni.values.inflowV.set(inflowFinal);
       const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
       uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
+    }
+    if (solverChanged) {
+      [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
+      solverChanged = false;
     }
 
     uni.update(device.queue);
