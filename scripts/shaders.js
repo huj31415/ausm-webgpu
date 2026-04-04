@@ -247,14 +247,15 @@ fn main(
       let u_int2 = dot(u_int, u_int);
       let P_int = (interiorState.w - 0.5 * u_int2 * rho_int) * (uni.gamma - 1.0);
       let a2 = (uni.gamma * P_int) / rho_int;
+      let a2inf = (uni.gamma * uni.inPressure / uni.inRho);
       let M_int = u_int2 / a2;
-      let M_inf2 = dot(uni.inflowV, uni.inflowV) / (uni.gamma * uni.inPressure / rho_int);
+      let M_inf2 = dot(uni.inflowV, uni.inflowV) / a2inf;
       if (M_int < 1.0 && M_inf2 < 1.0) {
         // subsonic outflow using Riemann invariant to extrapolate ghost state
         let u_normal_int = dot(u_int, normal);
         let u_normal_inf = boundaryInOrOut;
         let a_int = sqrt(a2);
-        let a_inf = sqrt(uni.gamma * uni.inPressure / rho_int);
+        let a_inf = sqrt(a2inf);
         
         // Riemann invariants
         let J_int = u_normal_int + 2 * a_int * gammaMinus1Inv;
@@ -263,7 +264,9 @@ fn main(
         // velocity in normal direction from Riemann invariant, tangential velocity from interior
         let u_normal_ghost = 0.5 * (J_int + J_ext);
         let a_ghost = max(a_int * 0.1, 0.25 * (J_int - J_ext) * (uni.gamma - 1.0));
-        let rho_ghost = max(1e-6, rho_int * pow(max(1e-6, a_ghost / a_int), 2.0 * gammaMinus1Inv));
+        let X = max(1e-6, a_ghost / a_int);
+        let X2 = X * X;
+        let rho_ghost = max(1e-6, rho_int * X2 * X2 * X); // for gamma = 1.4
 
         // combine tangential velocity with normal velocity from Riemann
         let vel_ghost = (u_normal_ghost - u_normal_int) * normal + u_int;
@@ -406,29 +409,33 @@ const fluxInterfaceStateCode = (vertical) => /* wgsl */`
 const AUSMupFluxShaderCode = (vertical) => /* wgsl */`
 ${fluxUtilsCode}
 
-fn M_1 (M: f32, plusOrMinus: f32) -> f32 {
-  return 0.5 * (M + plusOrMinus * abs(M));
-}
+// fn M_1 (M: f32, plusOrMinus: f32) -> f32 {
+//   return 0.5 * (M + plusOrMinus * abs(M));
+// }
 
-fn M_2 (M: f32, plusOrMinus: f32) -> f32 {
-  return plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus);
-}
+// fn M_2 (M: f32, plusOrMinus: f32) -> f32 {
+//   return plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus);
+// }
 
-fn M_4(M: f32, plusOrMinus: f32) -> f32 {
-  return select(
-    M_1(M, plusOrMinus),
-    M_2(M, plusOrMinus) * (1 - plusOrMinus * 2 * M_2(M, -plusOrMinus)), // beta * 16 = 2
-    abs(M) < 1.0
-  );
-}
+// fn M_4(M: f32, plusOrMinus: f32) -> f32 {
+//   return select(
+//     // 0.5 * (M + plusOrMinus * abs(M)),
+//     plusOrMinus * max(0.0, plusOrMinus * M),
+//     // M_2(M, plusOrMinus) * (1 - plusOrMinus * 2 * M_2(M, -plusOrMinus)), // beta * 16 = 2
+//     (plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus)) * (1 + 0.5 * (M - plusOrMinus) * (M - plusOrMinus)), // beta * 16 = 2
+//     abs(M) < 1.0
+//   );
+// }
 
-fn P_5(M: f32, alpha: f32, plusOrMinus: f32) -> f32 {
-  return select(
-    M_1(M, plusOrMinus) / M,
-    M_2(M, plusOrMinus) * ((plusOrMinus * 2 - M) - plusOrMinus * alpha * M * M_2(M, -plusOrMinus)),
-    abs(M) < 1.0
-  );
-}
+// fn P_5(M: f32, alpha4: f32, plusOrMinus: f32) -> f32 {
+//   return select(
+//     // 0.5 * (M + plusOrMinus * abs(M)) / M,
+//     step(0.0, plusOrMinus * M),
+//     // M_2(M, plusOrMinus) * ((plusOrMinus * 2 - M) - plusOrMinus * alpha * M * M_2(M, -plusOrMinus)),
+//     (plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus)) * ((plusOrMinus * 2 - M) + alpha4 * M * (M - plusOrMinus) * (M - plusOrMinus)),
+//     abs(M) < 1.0
+//   );
+// }
 
 @compute @workgroup_size(WG_X, WG_Y)
 fn main(
@@ -455,12 +462,39 @@ fn main(
   let f_a = M_o2 * (2 - M_o2); // eq 72
   let rho_interface = 0.5 * (rho_L + rho_R);
 
-  let M_interface = M_4(M_L, 1) + M_4(M_R, -1) - uni.K_p / f_a * max(1 - sigma * Mbar2, 0) * (p_R - p_L) / (rho_interface * a_interface2); // eq 73
+  let M_LR = vec2f(M_L, M_R);
 
-  let alpha16 = 3.0 * (-4 + 5 * f_a * f_a); // eq 76 * 16
-  let P_5plus = P_5(M_L, alpha16, 1);
-  let P_5minus = P_5(M_R, alpha16, -1);
-  let P_interface = P_5plus * p_L + P_5minus * p_R - uni.K_u * P_5plus * P_5minus * (rho_L + rho_R) * f_a * a_interface * (u_R - u_L); // eq 75
+  // precompute the M2 components for both L and R
+  let M_plus_1  = M_LR + 1.0;
+  let M_minus_1 = M_LR - 1.0;
+  let M2_plus  =  0.25 * M_plus_1  * M_plus_1;
+  let M2_minus = -0.25 * M_minus_1 * M_minus_1;
+
+  // vectorized M4 splitting
+  let M4_sub = vec2f(
+    M2_plus.x  * (1.0 + 2.0 * M2_minus.x),
+    M2_minus.y * (1.0 - 2.0 * M2_plus.y)
+  );
+
+  // supersonic check for both sides independently
+  let is_super = step(vec2f(1.0), abs(M_LR)); 
+  let M4_super = vec2f(max(0.0, M_L), min(0.0, M_R));
+  let M4_final = mix(M4_sub, M4_super, is_super);
+
+
+  let M_interface = M4_final.x + M4_final.y - uni.K_p / f_a * max(1 - sigma * Mbar2, 0) * (p_R - p_L) / (rho_interface * a_interface2); // eq 73
+
+  let alpha4 = 0.75 * (-4 + 5 * f_a * f_a); // eq 76 * 4
+  
+  // vectorized P5 splitting
+  let P5_sub = vec2f(
+    M2_plus.x  * (( 2.0 - M_L) + alpha4 * M_L * M2_minus.x),
+    M2_minus.y * ((-2.0 - M_R) - alpha4 * M_R * M2_plus.y)
+  );
+
+  let P5_super = vec2f(step(0.0, M_L), step(0.0, -M_R));
+  let P5_final = mix(P5_sub, P5_super, is_super);
+  let P_interface = dot(P5_final, vec2f(p_L, p_R)) - uni.K_u * P5_final.x * P5_final.y * (rho_L + rho_R) * f_a * a_interface * (u_R - u_L); // eq 75
   
   let mdot = a_interface * M_interface * select(rho_R, rho_L, M_interface > 0); // eq 74
 
@@ -506,11 +540,26 @@ fn main(
   let Uarc_unclamped = sqrt(0.5 * (dot(vel_L, vel_L) + dot(vel_R, vel_R)));
   let Marc = min(1.0, Uarc_unclamped / a_interface); // eq 2.3e
   let X = (1 - Marc) * (1 - Marc); // eq 2.3d
-  let f_p_plus = f_p(M_L, 1);
-  let f_p_minus = f_p(M_R, -1);
-  let P_interface = ((f_p_plus - f_p_minus) * (p_L - p_R) + ${version == 2
-    ? "(p_L + p_R) + (Uarc_unclamped * (f_p_plus + f_p_minus - 1) * (rho_L + rho_R) * a_interface)) * 0.5; // eq 3.4 SLAU2"
-    : "(1.0 + (1 - X) * (f_p_plus + f_p_minus - 1)) * (p_L + p_R)) * 0.5; // eq 2.3c SLAU original"
+
+  let M_LR = vec2f(M_L, M_R);
+
+  // precompute the M2 components for both L and R
+  let M_LRplusminus1 = vec2f(M_L + 1.0, M_R - 1.0);
+  let M_LR1sq = 0.5 * M_LRplusminus1 * M_LRplusminus1;
+  let plusOrMinus = vec2f(1.0, -1.0);
+  let is_super = step(vec2f(1.0), abs(M_LR)); 
+
+  let f_p_plusminus = saturate(0.5 * mix(
+    M_LR1sq * (2 - plusOrMinus * M_LR),
+    1 + plusOrMinus * sign(M_LR),
+    is_super
+  ));
+
+  let f_p_plus = f_p_plusminus.x;//f_p(M_L, 1);
+  let f_p_minus = f_p_plusminus.y;//f_p(M_R, -1);
+  let P_interface = 0.5 * ((f_p_plus - f_p_minus) * (p_L - p_R) + ${version == 2
+    ? "(p_L + p_R) + (Uarc_unclamped * (f_p_plus + f_p_minus - 1) * (rho_L + rho_R) * a_interface)); // eq 3.4 SLAU2"
+    : "(1.0 + (1 - X) * (f_p_plus + f_p_minus - 1)) * (p_L + p_R)); // eq 2.3c SLAU original"
   }
 
   let delta_p = p_R - p_L;
@@ -732,7 +781,13 @@ override WG_X: u32;
 override WG_Y: u32;
 
 fn colorMapBRYW(value: f32) -> vec4f {
-  return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate(2.0 * (value - 1.0) / value - 1.0), value / (value + 1.5704)); // atan(value) / 1.5708);//
+  return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate(2.0 * (value - 1.0) / value - 1.0), value / (value + uni.contourCompression)); // atan(value) / 1.5708);//
+  // return vec4f(
+  //   smoothstep(0.0, 1.0, value),
+  //   smoothstep(1.0, 2.0, value),
+  //   smoothstep(1.0, 0.0, value) + smoothstep(0.0, 1.0, 2.0 * (value - 1.0) / value - 1.0),
+  //   value / (value + uni.contourCompression)
+  // );
 }
 
 @compute @workgroup_size(WG_X, WG_Y)
@@ -785,8 +840,12 @@ fn main(
     textureStore(vis, gid.xy, color);
     return;
   } else if (uni.simDisplayMode == 7) {
-    let velND = abs(velocity) / inVelMag; // non-dimensionalize velocity by inflow velocity for visualization
-    textureStore(vis, gid.xy, vec4f(velND.x, 0.0, velND.y, speed / (speed + 1.5704)));
+    // let velND = abs(velocity) - inVelMag; // non-dimensionalize velocity by inflow velocity for visualization
+    // textureStore(vis, gid.xy, vec4f(velND.x, velND.y, 0.0, speed / (speed + uni.contourCompression)));
+    // relative velocity
+    let vRelAbs = abs(velocity - uni.inflowV) * uni.visMultiplier;
+    let adjSpeed = speed * uni.visMultiplier;
+    textureStore(vis, gid.xy, vec4f(vRelAbs / (vRelAbs + 1), 0.0, adjSpeed / (adjSpeed + uni.contourCompression)));
     return;
   }
   var localValue: f32;
@@ -825,7 +884,7 @@ fn main(
       freeStreamValue = uni.inRho;
     }
   }
-  textureStore(vis, gid.xy, colorMapBRYW(localValue / (freeStreamValue * 2)));
+  textureStore(vis, gid.xy, colorMapBRYW(((localValue - freeStreamValue) * uni.visMultiplier) / (freeStreamValue * 2) + 0.5));
 }
 `;
 
@@ -914,7 +973,7 @@ fn fs(vtx: VertexOut) -> @location(0) vec4f {
   if (uni.contourLevels > 0) {
     // https://observablehq.com/@rreusser/locally-scaled-domain-coloring-part-1-contour-plots#contours
     // let plotValue = tan(state.a * 1.5708) * uni.contourLevels;
-    let plotValue = 1.5708 * state.a / (1.0 - state.a) * uni.contourLevels;
+    let plotValue = uni.contourCompression * state.a / (1.0 - state.a) * uni.contourLevels;
     // let screenSpaceGradient = fwidthFine(plotValue);
     let screenSpaceGradient = length(vec2f(dpdxFine(plotValue), dpdyFine(plotValue)));
     let contourLineWidth = 1.0;

@@ -747,6 +747,8 @@ uni.values.inPressure.set([inPressure]);
 uni.values.inRho.set([inRho]);
 uni.values.cflFactor.set([2.0]);
 uni.values.muscl.set([1.0]);
+uni.values.contourCompression.set([1.001]);
+uni.values.visMultiplier.set([1.0]);
 
 
 main()

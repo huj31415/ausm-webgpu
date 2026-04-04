@@ -23,7 +23,8 @@ uni.addUniform("cflFactor", "f32");
 
 uni.addUniform("contourLevels", "f32");
 uni.addUniform("muscl", "f32");
-
+uni.addUniform("contourCompression", "f32");
+uni.addUniform("visMultiplier", "f32");
 
 uni.finalize();
 
@@ -106,11 +107,10 @@ let updateSolver = (solver) => {};
 let displayMode = simDisplayModes.schlieren;
 uni.values.simDisplayMode.set([displayMode]);
 
-
 const canvas = document.getElementById("canvas");
 let pixelRatio = window.devicePixelRatio || 1;
 
-const gui = new GUI("AUSM-family compressible fluid sim", canvas);
+const gui = new GUI("AUSM-family compressible inviscid fluid sim", canvas);
 
 gui.addGroup("perf", "Performance");
 gui.addStringOutput("res", "Resolution", "", "perf");
@@ -191,6 +191,9 @@ gui.addButton("restart", "Restart", false, "sim", () => prepareState());
 gui.addGroup("rendering", "Rendering");
 gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => {
   uni.values.contourLevels.set([value]);
+});
+gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => {
+  uni.values.visMultiplier.set([value]);
 });
 
 gui.updateAllVisibility();
