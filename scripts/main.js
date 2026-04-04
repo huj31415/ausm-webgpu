@@ -634,6 +634,11 @@ texture-formats-tier1: ${textureTier1}
     if (dt > 0) {
       for (let step = 0; step < stepsPerFrame; step++) {
         // state2 -> state0 (Qn)
+        encoder.copyTextureToTexture(
+          { texture: storage.state2 },
+          { texture: storage.state0 },
+          totalCellCount
+        );
         createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
         // state0 -> fluxY
         createComputePass(encoder.beginComputePass(), verticalFluxComputePipeline, verticalFluxBindGroups[0], wgDispatchSize(yFluxTexSize));
@@ -645,6 +650,11 @@ texture-formats-tier1: ${textureTier1}
         createComputePass(encoder.beginComputePass(), integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
 
         // state1 -> state2 (Q1)
+        encoder.copyTextureToTexture(
+          { texture: storage.state1 },
+          { texture: storage.state2 },
+          totalCellCount
+        );
         createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
         // state2 -> fluxY
         createComputePass(encoder.beginComputePass(), verticalFluxComputePipeline, verticalFluxBindGroups[1], wgDispatchSize(yFluxTexSize));
@@ -656,6 +666,11 @@ texture-formats-tier1: ${textureTier1}
         createComputePass(encoder.beginComputePass(), integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
 
         // state2 -> state1 (Q2)
+        encoder.copyTextureToTexture(
+          { texture: storage.state2 },
+          { texture: storage.state1 },
+          totalCellCount
+        );
         createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
         // state1 -> fluxY
         createComputePass(encoder.beginComputePass(), verticalFluxComputePipeline, verticalFluxBindGroups[2], wgDispatchSize(yFluxTexSize));

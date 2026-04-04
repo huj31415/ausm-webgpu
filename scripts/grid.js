@@ -47,7 +47,7 @@ function generateNACA4Boundary(t, naca4, size=1.0, xOffset=0) {
   const thickness = naca4 % 100 / 100;
   const m = Math.floor(naca4 / 1000) / 100; // maximum camber
   const p = Math.floor(naca4 / 100) % 10 / 10; // location of maximum camber
-  const thicknessFunction = (t) => 5 * thickness * (0.2969 * Math.sqrt(t) - 0.126 * t - 0.3516 * t**2 + 0.2843 * t**3 - 0.1015 * t**4);
+  const thicknessFunction = (t) => 5 * thickness * (0.2969 * Math.sqrt(t) - 0.126 * t - 0.3516 * t**2 + 0.2843 * t**3 - 0.1036 * t**4);
   const camberFunction = (t) => t <= p ? (m / p**2) * (2*p*t - t**2) : (m / (1-p)**2) * ((1 - 2*p) + 2*p*t - t**2);
   const camberDerivativeFunction = (t) => (t <= p ? (m / p**2) : (m / (1-p)**2)) * (2*p - 2*t);
   const symmetricAirfoil = (t) => [thicknessFunction(t) * -Math.sin(Math.atan(camberDerivativeFunction(t))), thicknessFunction(t) / Math.sqrt(1 + camberDerivativeFunction(t)**2)];
@@ -108,7 +108,7 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
     return [(t*2-1) * lengthRatio, -1];
   }
 }
-const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, Math.PI/4, -0.7));
+const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 4, .1, 0*Math.PI/4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));

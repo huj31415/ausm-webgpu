@@ -36,7 +36,7 @@ const storage = {
   // conformal structured grid 
   gridPoints0: null,      // rg32float (M+1)x(N+1)  xy points in clip space, derive normals and lengths from this
   gridPoints1: null,      //                        same as above, used for ping-ponging during iterative Poisson solve
-  gridBoundaries: null,   // r32sint   (M+1)x(N+1)  boundary conditions and indices of connections between nonadjacent cells for each vertex
+  gridBoundaries: null,   // r32sint   (M+1)x(N+1)  boundary conditions and indices of connections between nonadjacent vertices, use linear buffers instead?
                           //                        positive: index of connected cell, otherwise: type of boundary (-1: object, -2: domain outer boundary (derive inflow and outflow from normal direction))//-2: inlet, -4: outlet)
                           // replace with linear indices for 4 sides if no boundaries inside domain?
   faceLengths: null,      // rgba32float (M)x(N)    lengths of cell faces, used for flux calculations and visualization

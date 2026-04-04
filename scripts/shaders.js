@@ -207,11 +207,14 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-
   let simDomain = vec2u(uni.simDomain);
-  let rightIdx = (gid.x + 1) % simDomain.x;
-
   let boundary = textureLoad(gridBoundaries, gid.xy, 0).x;
+  let isObjectBoundary = gid.y == 0;
+  let isOuterBoundary = gid.y > simDomain.y;
+
+  if (!isObjectBoundary && !isOuterBoundary) { return; } // only compute for ghost cells, skip interior
+
+  let rightIdx = (gid.x + 1) % simDomain.x;
   
   let vtxYCoord = clamp(gid.y, 0, simDomain.y);
   let vtx1 = textureLoad(gridPoints, vec2u(gid.x, vtxYCoord), 0).xy;
@@ -221,9 +224,9 @@ fn main(
   let tangent = normalize(vtx1 - vtx2);
   let normal = vec2f(-tangent.y, tangent.x);
 
-  var ghostState = textureLoad(stateIn, gid.xy, 0); // default to copy of interior state, may be modified by boundary conditions below
+  var ghostState: vec4f; // = textureLoad(stateIn, gid.xy, 0); // state copied before boundary dispatch
 
-  if (gid.y == 0) {
+  if (isObjectBoundary) {
     // handle object boundary - reflect velocity for slip condition
     let interiorState = textureLoad(stateIn, vec2u(gid.x, 1), 0);
     let rho_int = interiorState.x;
@@ -231,7 +234,7 @@ fn main(
     let ghost_U = reflect(u_int, normal); // reflect velocity across normal
     // let rhoE = (interiorState.w - 0.5 * dot(u_int, u_int) * rho_int) + 0.5 * rho_int * dot(ghost_U, ghost_U);
     ghostState = vec4f(rho_int, ghost_U * rho_int, interiorState.w); // reflect velocity, keep other states, KE doesn't change
-  } else if (gid.y > simDomain.y) {
+  } else if (isOuterBoundary) {
     // handle outer boundary
     let interiorState = textureLoad(stateIn, vec2u(gid.x, simDomain.y), 0);
     let rho_int = interiorState.x;
