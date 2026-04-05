@@ -107,13 +107,13 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
 
-const objectCoords = Object.freeze({
+const objectCoords = {
   "polygon": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 4, .1, 0*Math.PI/4, -0.7)),
   "circle": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, 0, -0.7)),
   "naca-4": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7)),
   "airfoil-dat": sampleAirfoil(whitcombIntegral, gridVertexCount[0], 0.3, -0.7),
   "sears-haack": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7)),
-});
+};
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));
 
 function updateGridBoundaries(objCoords = objectCoords["polygon"], boundCoords = boundaryCoords) {
@@ -148,7 +148,24 @@ function updateGridBoundaries(objCoords = objectCoords["polygon"], boundCoords =
 updateGridBoundaries();
 
 
-gui.addDropdown("objectType", "Object type", ["polygon", "circle", "naca-4", "airfoil-dat", "sears-haack"], "grid", null, (value) => {
+gui.addDropdown("objectType", "Object type", ["polygon", "circle", "naca-4", "airfoil-dat", "sears-haack"], "grid", {
+  "polygon": [],
+  "circle": [],
+  "naca-4": ["naca4"],
+  "airfoil-dat": ["airfoilDatFile"],
+  "sears-haack": [],
+});
+gui.addFileInput("airfoilDatFile", "Airfoil .dat file", "grid", (file) => {
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const text = event.target.result;
+    const coords = sampleAirfoil(text, gridVertexCount[0], 0.3, -0.7);
+    objectCoords["airfoil-dat"] = coords;
+  }
+  reader.readAsText(file);
+});
+gui.addNumericInput("naca4", false, "NACA 4-digit", { min: 101, max: 9999, step: 1, val: 4415, float: 0 }, "grid", (value) => {
+  objectCoords["naca-4"] = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, value, 0.2, -0.7));
 });
 gui.addButton("updateGrid", "Update grid", true, "grid", () => {
   // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));

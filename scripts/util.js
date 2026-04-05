@@ -200,8 +200,6 @@ gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step
   uni.values.visMultiplier.set([value]);
 });
 
-gui.updateAllVisibility();
-
 // handle resizing
 window.onresize = window.onload = () => {
   pixelRatio = window.devicePixelRatio || 1;

@@ -766,5 +766,6 @@ uni.values.muscl.set([1.0]);
 uni.values.contourCompression.set([1.001]);
 uni.values.visMultiplier.set([1.0]);
 
+gui.updateAllVisibility();
 
 main()
