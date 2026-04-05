@@ -29,12 +29,6 @@ gui.addDropdown("gridDisplayMode", "Grid display mode", ["full", "mesh", "vertic
   [gridDisplayMode, numVertices] = gridDisplayProperties[value];
   uni.values.gridDisplayMode.set([gridDisplayMode]);
 });
-gui.addButton("updateGrid", "Update grid", true, "grid", () => {
-  const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
-  updateGridBoundaries(objectCoords);
-  prepareGrid();
-
-});
 
 const gridVtxData = new Float32Array(gridVertexCount[0] * gridVertexCount[1] * 2);
 const gridBoundaryData = new Int16Array(gridVertexCount[0] * gridVertexCount[1] * 2);
@@ -108,12 +102,21 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
     return [(t*2-1) * lengthRatio, -1];
   }
 }
-const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 4, .1, 0*Math.PI/4, -0.7));
+// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, .1, 0*Math.PI/4, -0.7));
+// const objectCoords = sampleAirfoil(whitcombIntegral, gridVertexCount[0], 0.3, -0.7);
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
 // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
+
+const objectCoords = Object.freeze({
+  "polygon": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 4, .1, 0*Math.PI/4, -0.7)),
+  "circle": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, 0, -0.7)),
+  "naca-4": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7)),
+  "airfoil-dat": sampleAirfoil(whitcombIntegral, gridVertexCount[0], 0.3, -0.7),
+  "sears-haack": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7)),
+});
 const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateRectangularOuterBoundary(t, 1.5));
 
-function updateGridBoundaries(objCoords = objectCoords, boundCoords = boundaryCoords) {
+function updateGridBoundaries(objCoords = objectCoords["polygon"], boundCoords = boundaryCoords) {
   for (let x = 0; x < gridVertexCount[0]; x++) {
     const i = vtxIdx(x, 0);
     gridVtxData[i] = objCoords[x][0];
@@ -143,3 +146,12 @@ function updateGridBoundaries(objCoords = objectCoords, boundCoords = boundaryCo
   // need solution for corners - 
 }
 updateGridBoundaries();
+
+
+gui.addDropdown("objectType", "Object type", ["polygon", "circle", "naca-4", "airfoil-dat", "sears-haack"], "grid", null, (value) => {
+});
+gui.addButton("updateGrid", "Update grid", true, "grid", () => {
+  // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
+  updateGridBoundaries(objectCoords[gui.io.objectType.value]);
+  prepareGrid();
+});
