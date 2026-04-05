@@ -35,20 +35,20 @@ const gridBoundaryData = new Int16Array(gridVertexCount[0] * gridVertexCount[1] 
 const cellIdx = (x, y) => (y * simulationDomain[0] + x);
 const vtxIdx = (x, y) => (y * gridVertexCount[0] + x) * 2;
 
-function generateNACA4Boundary(t, naca4, size=1.0, xOffset=0) {
+function generateNACA4Boundary(t, naca4, size=1.0, xOffset=0, pointDistExponent = 7/5) {
   t /= gridVertexCount[0] / 2;
   size *= 2;
   const thickness = naca4 % 100 / 100;
   const m = Math.floor(naca4 / 1000) / 100; // maximum camber
   const p = Math.floor(naca4 / 100) % 10 / 10; // location of maximum camber
   const thicknessFunction = (t) => 5 * thickness * (0.2969 * Math.sqrt(t) - 0.126 * t - 0.3516 * t**2 + 0.2843 * t**3 - 0.1036 * t**4);
-  const camberFunction = (t) => t <= p ? (m / p**2) * (2*p*t - t**2) : (m / (1-p)**2) * ((1 - 2*p) + 2*p*t - t**2);
-  const camberDerivativeFunction = (t) => (t <= p ? (m / p**2) : (m / (1-p)**2)) * (2*p - 2*t);
+  const camberFunction = (t) => t < p ? (m / p**2) * (2*p*t - t**2) : (m / (1-p)**2) * ((1 - 2*p) + 2*p*t - t**2);
+  const camberDerivativeFunction = (t) => (t < p ? (m / p**2) : (m / (1-p)**2)) * (2*p - 2*t);
   const symmetricAirfoil = (t) => [thicknessFunction(t) * -Math.sin(Math.atan(camberDerivativeFunction(t))), thicknessFunction(t) / Math.sqrt(1 + camberDerivativeFunction(t)**2)];
   const airfoilUpper = (t) => [(t - 0.5 + symmetricAirfoil(t)[0]) * size + xOffset, (camberFunction(t) + symmetricAirfoil(t)[1]) * size];
   const airfoilLower = (t) => [(t - 0.5 - symmetricAirfoil(t)[0]) * size + xOffset, (camberFunction(t) - symmetricAirfoil(t)[1]) * size];
   // return points in counterclockwise order starting from trailing edge
-  return (t <= 1) ? airfoilUpper(1 - t) : airfoilLower(t - 1);
+  return (t <= 1) ? airfoilUpper((1 - t) ** pointDistExponent) : airfoilLower((t - 1) ** pointDistExponent);
 }
 function generateSearsHaackBoundary(t, V = 0.2, L = 10, xOffset = -0.7) {
   t /= (gridVertexCount[0] / 2);
@@ -164,11 +164,10 @@ gui.addFileInput("airfoilDatFile", "Airfoil .dat file", "grid", (file) => {
   }
   reader.readAsText(file);
 });
-gui.addNumericInput("naca4", false, "NACA 4-digit", { min: 101, max: 9999, step: 1, val: 4415, float: 0 }, "grid", (value) => {
-  objectCoords["naca-4"] = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, value, 0.2, -0.7));
+gui.addNumericInput("naca4", false, "NACA 4-digit", { min: 1, max: 9999, step: 1, val: 4415, float: 0 }, "grid", (value) => {
+  objectCoords["naca-4"] = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, value, 0.3, -0.7)); // should do this only when loading new grid
 });
 gui.addButton("updateGrid", "Update grid", true, "grid", () => {
-  // const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
   updateGridBoundaries(objectCoords[gui.io.objectType.value]);
   prepareGrid();
 });
