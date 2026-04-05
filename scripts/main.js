@@ -548,7 +548,7 @@ texture-formats-tier1: ${textureTier1}
     uni.update(device.queue);
     const encoder = device.createCommandEncoder();
 
-    createComputePass(encoder.beginComputePass(), prepareStateComputePipeline, prepareStateBindGroup, wgDispatchSize(simulationDomain));
+    createComputePass(encoder.beginComputePass(), prepareStateComputePipeline, prepareStateBindGroup, wgDispatchSize(totalCellCount));
     encoder.copyTextureToTexture(
       { texture: storage.state0 },
       { texture: storage.state1 },
@@ -631,7 +631,7 @@ texture-formats-tier1: ${textureTier1}
     uni.update(device.queue);
 
     // simulate
-    if (dt > 0) {
+    if (maxdt > 0) {
       for (let step = 0; step < stepsPerFrame; step++) {
         // state2 -> state0 (Qn)
         encoder.copyTextureToTexture(
@@ -692,7 +692,7 @@ texture-formats-tier1: ${textureTier1}
     }
 
     createComputePass(postprocessingTimingHelper.beginComputePass(encoder), visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
-    createComputePass(reductionTimingHelper.beginComputePass(encoder), cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256), 1]);
+    createComputePass(reductionTimingHelper.beginComputePass(encoder), cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
     // encoder.copyBufferToBuffer(
     //   storage.maxWaveSpeed,          // Source buffer
     //   0,                  // Source offset
@@ -744,6 +744,7 @@ texture-formats-tier1: ${textureTier1}
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
     gui.io.stepsPerFrame(stepsPerFrame);
+
   }, 100);
 
 
@@ -753,14 +754,14 @@ texture-formats-tier1: ${textureTier1}
 uni.values.zoom.set([1.0]);
 uni.values.pan.set([0.0, 0.0]);
 uni.values.simDomain.set(simulationDomain);
-uni.values.dt.set([dt]);
+uni.values.maxdt.set([maxdt]);
 uni.values.inflowV.set([0, 0]);
 uni.values.gamma.set([gamma]);
 uni.values.K_p.set([K_p]);
 uni.values.K_u.set([K_u]);
 uni.values.inPressure.set([inPressure]);
 uni.values.inRho.set([inRho]);
-uni.values.cflFactor.set([2.0]);
+uni.values.cflFactor.set([1.5]);
 uni.values.muscl.set([1.0]);
 uni.values.contourCompression.set([1.001]);
 uni.values.visMultiplier.set([1.0]);

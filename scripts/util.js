@@ -7,7 +7,7 @@ uni.addUniform("pan", "vec2f");
 
 uni.addUniform("inflowV", "vec2f");
 uni.addUniform("zoom", "f32");
-uni.addUniform("dt", "f32");
+uni.addUniform("maxdt", "f32");
 
 uni.addUniform("inPressure", "f32");
 uni.addUniform("inRho", "f32");
@@ -64,7 +64,7 @@ const storage = {
 
 let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = cflTime = 0;
 let poissonTime = 0;
-let dt = 1e-4;
+let maxdt = 1e-4;
 let oldDt;
 let stepsPerFrame = 70;
 
@@ -139,8 +139,12 @@ gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density",
   displayMode = simDisplayModes[value];
   uni.values.simDisplayMode.set([displayMode]);
 });
-gui.addNumericInput("cflFactor", true, "CFL factor", { min: 0.1, max: 3, step: 0.1, val: 2.0, float: 1 }, "sim", (value) => {
+gui.addNumericInput("cflFactor", true, "CFL factor", { min: 0.1, max: 3, step: 0.1, val: 1.5, float: 1 }, "sim", (value) => {
   uni.values.cflFactor.set([value]);
+});
+gui.addNumericInput("maxdt", true, "Max dt (exp10)", { min: -6, max: 0, step: 0.1, val: Math.log10(maxdt), float: 1 }, "sim", (value) => {
+  maxdt = 10 ** value;
+  uni.values.maxdt.set([maxdt]);
 });
 gui.addNumericOutput("mach", "Mach number", "", 2, "sim");
 gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 20, step: 0.01, val: inflowVel, float: 2 }, "sim", (value) => {
@@ -178,11 +182,11 @@ gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => {
 // });
 gui.addButton("toggleSim", "Play / Pause", false, "sim", () => {
   if (oldDt) {
-    dt = oldDt;
+    maxdt = oldDt;
     oldDt = null;
   } else {
-    oldDt = dt;
-    dt = 0;
+    oldDt = maxdt;
+    maxdt = 0;
   }
   uni.values.dt.set([dt]);
 });
@@ -211,6 +215,7 @@ window.onresize = window.onload = () => {
 };
 
 // handle panning and zooming
+// need to fix zooming
 let isPanning = false;
 let lastMousePos = [0, 0];
 let currentZoom = 1.0;

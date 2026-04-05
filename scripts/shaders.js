@@ -185,7 +185,7 @@ fn main(
 ) {
   // initialize interior state to air at rest
   let rhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * uni.inRho * 0.0;
-  textureStore(state, gid.xy + vec2u(0, 1), vec4f(uni.inRho, 0.0, 0.0, rhoE));
+  textureStore(state, gid.xy, vec4f(uni.inRho, 0.0, 0.0, rhoE));
 }
 `;
 
@@ -643,7 +643,7 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
+  let dt = min(uni.maxdt, uni.cflFactor / bitcast<f32>(maxWaveSpeed));
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let cellIdx = gid.xy + vec2u(0, 1); // shift up by 1 to account for ghost cells
   let res = textureLoad(residual, gid.xy, 0);
@@ -673,7 +673,7 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
+  let dt = min(uni.maxdt, uni.cflFactor / bitcast<f32>(maxWaveSpeed));
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let cellIdx = gid.xy + vec2u(0, 1); // shift up by 1 to account for ghost cells
   let res = textureLoad(residual, gid.xy, 0);
@@ -704,7 +704,7 @@ override WG_Y: u32;
 fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
-  let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
+  let dt = min(uni.maxdt, uni.cflFactor / bitcast<f32>(maxWaveSpeed));
   if (gid.y >= u32(uni.simDomain.y)) { return; } // only update interior cells, skip ghost cells
   let cellIdx = gid.xy + vec2u(0, 1); // shift up by 1 to account for ghost cells
   let res = textureLoad(residual, gid.xy, 0);
@@ -719,7 +719,7 @@ fn main(
 // find minimum CFL value across grid for stable time step
 // Full reduction in 1 dispatch
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
-// need to clear each frame: device.queue.writeBuffer(cflOutBuffer, 0, new Uint32Array([0x7F7FFFFF]));
+// need to clear each frame: device.queue.writeBuffer(cflOutBuffer, 0, new Uint32Array([0]));
 // read as let dt = uni.cflFactor / bitcast<f32>(maxWaveSpeed);
 const cflReductionShaderCode = /* wgsl */`
 ${uni.uniformStruct}
@@ -741,6 +741,9 @@ fn main(
   // @builtin(workgroup_id) wid: vec3u,
   @builtin(num_workgroups) nwg: vec3u
 ) {
+  if (all(gid == vec3u(0))) {
+    atomicStore(&maxWaveSpeed, 0u); // reset max wave speed for this frame, will be updated by reduction
+  }
   let lidx = lid.x;
   var i = gid.x;
   var acc = 0.0;
@@ -785,6 +788,7 @@ override WG_Y: u32;
 
 fn colorMapBRYW(value: f32) -> vec4f {
   return vec4f(value, value - 1.0, saturate(1.0 - value) + saturate(2.0 * (value - 1.0) / value - 1.0), value / (value + uni.contourCompression)); // atan(value) / 1.5708);//
+  // return vec4f(saturate(value), saturate(abs(value) - 1.0), mix(saturate(-value), saturate(2.0 * (value - 1.0) / value - 1.0), f32(value > 0.0)), value / (value + uni.contourCompression)); // atan(value) / 1.5708);//
   // return vec4f(
   //   smoothstep(0.0, 1.0, value),
   //   smoothstep(1.0, 2.0, value),
@@ -848,7 +852,8 @@ fn main(
     // relative velocity
     let vRelAbs = abs(velocity - uni.inflowV) * uni.visMultiplier;
     let adjSpeed = speed * uni.visMultiplier;
-    textureStore(vis, gid.xy, vec4f(vRelAbs / (vRelAbs + 1), 0.0, adjSpeed / (adjSpeed + uni.contourCompression)));
+    let velocityRGB = vec3f(vRelAbs, velocity.y) / vec3f(vRelAbs + 1, abs(velocity.y) + 1);
+    textureStore(vis, gid.xy, vec4f(velocityRGB, adjSpeed / (adjSpeed + uni.contourCompression)));
     return;
   }
   var localValue: f32;
@@ -868,7 +873,7 @@ fn main(
     }
     case 5,6: {
       localValue = speed / a;
-      freeStreamValue = select(1.0, inVelMag / sqrt(uni.gamma * inTemp), uni.simDisplayMode == 6);
+      freeStreamValue = select(0.5, inVelMag / sqrt(uni.gamma * inTemp), uni.simDisplayMode == 6);
     }
     case 8: {
       localValue = log(pressure / pow(rho, uni.gamma));
@@ -888,6 +893,7 @@ fn main(
     }
   }
   textureStore(vis, gid.xy, colorMapBRYW(((localValue - freeStreamValue) * uni.visMultiplier) / (freeStreamValue * 2) + 0.5));
+  // textureStore(vis, gid.xy, colorMapBRYW((localValue - freeStreamValue) * uni.visMultiplier));
 }
 `;
 
