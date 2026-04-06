@@ -282,7 +282,11 @@ function sampleAirfoil(datText, n, scale = 1.0, xOffset = 0.0) {
   const sample = parseAirfoil(datText);
   const points = [];
   for (let k = 0; k < n; k++) {
-    let point = sample(k / n);
+    let x = k / n;
+    let a = 5;
+    let b = ((a - 1) * x + 0.5) / a;
+    let samplePos = 0.5 + Math.log(b / (1 - b)) / (2 * Math.log(2 * a - 1)); // bias towards leading edge for better resolution
+    let point = sample(samplePos);
     points.push([(point[0] - 0.5) * scale + xOffset, point[1] * scale]);
   }
   return points;

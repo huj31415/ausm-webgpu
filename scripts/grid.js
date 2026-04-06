@@ -9,7 +9,7 @@ let poissonIterations = 0;
 let maxPoissonIterations = 10000;
 // let gridFinalized = false;
 
-const simulationDomain = [512, 512]; // circumferential * radial for o grid
+const simulationDomain = [512, 384]; // circumferential * radial for o grid
 const gridVertexCount = [(simulationDomain[0]), (simulationDomain[1] + 1)];
 const xFluxTexSize = [(simulationDomain[0] + 1), (simulationDomain[1])];
 const yFluxTexSize = [(simulationDomain[0]), (simulationDomain[1] + 1)];

@@ -209,7 +209,7 @@ window.onresize = window.onload = () => {
   // uni.values.resolution.set([canvas.width, canvas.height]);
   const invMinRes = 1 / Math.min(canvas.width, canvas.height);
   uni.values.resRatio.set([canvas.width * invMinRes, canvas.height * invMinRes]);
-  gui.io.res([window.innerWidth, window.innerHeight]);
+  gui.io.res([canvas.width, canvas.height]);
 };
 
 // handle panning and zooming
