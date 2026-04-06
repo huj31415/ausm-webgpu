@@ -188,7 +188,7 @@ gui.addButton("toggleSim", "Play / Pause", false, "sim", () => {
     oldDt = maxdt;
     maxdt = 0;
   }
-  uni.values.dt.set([dt]);
+  uni.values.maxdt.set([maxdt]);
 });
 gui.addButton("restart", "Restart", false, "sim", () => prepareState());
 
