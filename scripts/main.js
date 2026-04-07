@@ -33,7 +33,8 @@ enable f16;
 
   // compute workgroup size 32^2 = 1024 threads if maxComputeInvocationsPerWorkgroup >= 1024, otherwise 16^2 = 256 threads
   const largeWg = maxComputeInvocationsPerWorkgroup >= 1024;
-  const [wg_x, wg_y] = largeWg ? [32, 32] : [16, 16];
+  // seems like smaller workgroups are faster
+  const [wg_x, wg_y] = largeWg ? [16, 16] : [16, 16];
 
   if (!gpuInfo) {
     gui.addGroup("deviceInfo", "Device info", `
@@ -516,7 +517,7 @@ texture-formats-tier1: ${textureTier1}
 
   const renderTimingHelper = new TimingHelper(device);
   const postprocessingTimingHelper = new TimingHelper(device);
-  const reductionTimingHelper = new TimingHelper(device);
+  const gridTimingHelper = new TimingHelper(device);
 
   const wgDispatchSize = (texSize) => [
     Math.ceil(texSize[0] / wg_x),
@@ -528,7 +529,7 @@ texture-formats-tier1: ${textureTier1}
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
     pass.dispatchWorkgroups(...dispatchSize);
-    pass.end();
+    // pass.end();
   }
 
   // get target frame time by measuring the time of two consecutive frames
@@ -548,7 +549,9 @@ texture-formats-tier1: ${textureTier1}
     uni.update(device.queue);
     const encoder = device.createCommandEncoder();
 
-    createComputePass(encoder.beginComputePass(), prepareStateComputePipeline, prepareStateBindGroup, wgDispatchSize(totalCellCount));
+    const statePrepPass = encoder.beginComputePass();
+    createComputePass(statePrepPass, prepareStateComputePipeline, prepareStateBindGroup, wgDispatchSize(totalCellCount));
+    statePrepPass.end();
     encoder.copyTextureToTexture(
       { texture: storage.state0 },
       { texture: storage.state1 },
@@ -587,29 +590,35 @@ texture-formats-tier1: ${textureTier1}
     const encoder = device.createCommandEncoder();
 
     // create initial guess using linear interpolation
-    createComputePass(encoder.beginComputePass(), gridInterpolationComputePipeline, gridInterpolationBindGroup, wgDispatchSize(gridVertexCount));
+    const initGuessPass = encoder.beginComputePass();
+    createComputePass(initGuessPass, gridInterpolationComputePipeline, gridInterpolationBindGroup, wgDispatchSize(gridVertexCount));
+    initGuessPass.end();
     encoder.copyTextureToTexture(
       { texture: storage.gridPoints1 },
       { texture: storage.gridPoints0 },
       gridVertexCount
     );
     // iteratively solve elliptic Poisson equation to smooth the grid
+    const gridSolveAndFinalizePass = gridTimingHelper.beginComputePass(encoder);
     for (let i = 0; i < maxPoissonIterations; i++) {
-      createComputePass(encoder.beginComputePass(), gridEllipticPoissonComputePipeline, gridEllipticPoissonBindGroups[pingPongIndex], wgDispatchSize(gridVertexCount));
+      createComputePass(gridSolveAndFinalizePass, gridEllipticPoissonComputePipeline, gridEllipticPoissonBindGroups[pingPongIndex], wgDispatchSize(gridVertexCount));
       pingPongIndex = 1 - pingPongIndex;
     }
     poissonIterations = maxPoissonIterations;
 
     // finalize grid by computing cell areas, face lengths, and cell distances
-    createComputePass(encoder.beginComputePass(), gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], wgDispatchSize(simulationDomain));
+    createComputePass(gridSolveAndFinalizePass, gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], wgDispatchSize(simulationDomain));
+    gridSolveAndFinalizePass.end();
     // pingPongIndex = 1 - pingPongIndex;
 
     device.queue.submit([encoder.finish()]);
+    setTimeout(() => {
+      gridTimingHelper.getResult().then(gpuTime => gui.io.gridTime(gpuTime / 1e6));
+    }, 100);
     prepareState();
   }
 
   prepareGrid();
-
 
   function render() {
     // update performance info
@@ -626,62 +635,65 @@ texture-formats-tier1: ${textureTier1}
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
-    const encoder = device.createCommandEncoder();
-
     uni.update(device.queue);
+
+    const encoder = device.createCommandEncoder();
 
     // simulate
     if (maxdt > 0) {
-      for (let step = 0; step < stepsPerFrame; step++) {
+      for (let i = 0; i < stepsPerFrame; i++) {
         // state2 -> state0 (Qn)
         encoder.copyTextureToTexture(
           { texture: storage.state2 },
           { texture: storage.state0 },
           totalCellCount
         );
-        createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
+        const computePass1 = encoder.beginComputePass();
+        createComputePass(computePass1, boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
         // state0 -> fluxY
-        createComputePass(encoder.beginComputePass(), verticalFluxComputePipeline, verticalFluxBindGroups[0], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass1, verticalFluxComputePipeline, verticalFluxBindGroups[0], wgDispatchSize(yFluxTexSize));
         // state0 -> fluxX
-        createComputePass(encoder.beginComputePass(), horizontalFluxComputePipeline, horizontalFluxBindGroups[0], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass1, horizontalFluxComputePipeline, horizontalFluxBindGroups[0], wgDispatchSize(xFluxTexSize));
         // fluxX, fluxY -> residual
-        createComputePass(encoder.beginComputePass(), residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass1, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn) + residual -> state1 (Q1)
-        createComputePass(encoder.beginComputePass(), integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
-
+        createComputePass(computePass1, integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
+        computePass1.end();
         // state1 -> state2 (Q1)
         encoder.copyTextureToTexture(
           { texture: storage.state1 },
           { texture: storage.state2 },
           totalCellCount
         );
-        createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
+        const computePass2 = encoder.beginComputePass();
+        createComputePass(computePass2, boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
         // state2 -> fluxY
-        createComputePass(encoder.beginComputePass(), verticalFluxComputePipeline, verticalFluxBindGroups[1], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass2, verticalFluxComputePipeline, verticalFluxBindGroups[1], wgDispatchSize(yFluxTexSize));
         // state2 -> fluxX
-        createComputePass(encoder.beginComputePass(), horizontalFluxComputePipeline, horizontalFluxBindGroups[1], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass2, horizontalFluxComputePipeline, horizontalFluxBindGroups[1], wgDispatchSize(xFluxTexSize));
         // fluxX, fluxY -> residual
-        createComputePass(encoder.beginComputePass(), residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass2, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn), state1 (Q1) + residual -> state2 (Q2)
-        createComputePass(encoder.beginComputePass(), integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
-
+        createComputePass(computePass2, integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
+        computePass2.end();
         // state2 -> state1 (Q2)
         encoder.copyTextureToTexture(
           { texture: storage.state2 },
           { texture: storage.state1 },
           totalCellCount
         );
-        createComputePass(encoder.beginComputePass(), boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
+        const computePass3 = encoder.beginComputePass();
+        createComputePass(computePass3, boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
         // state1 -> fluxY
-        createComputePass(encoder.beginComputePass(), verticalFluxComputePipeline, verticalFluxBindGroups[2], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass3, verticalFluxComputePipeline, verticalFluxBindGroups[2], wgDispatchSize(yFluxTexSize));
         // state1 -> fluxX
-        createComputePass(encoder.beginComputePass(), horizontalFluxComputePipeline, horizontalFluxBindGroups[2], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass3, horizontalFluxComputePipeline, horizontalFluxBindGroups[2], wgDispatchSize(xFluxTexSize));
         // fluxX, fluxY -> residual
-        createComputePass(encoder.beginComputePass(), residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass3, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn), state1 (Q2) + residual -> state2 (Qn+1)
-        createComputePass(encoder.beginComputePass(), integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass3, integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
+        computePass3.end();
       }
-      
       // update inflow velocity, will be 1 frame behind
       actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
       const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
@@ -691,8 +703,6 @@ texture-formats-tier1: ${textureTier1}
       uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
     }
 
-    createComputePass(postprocessingTimingHelper.beginComputePass(encoder), visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
-    createComputePass(reductionTimingHelper.beginComputePass(encoder), cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
     // encoder.copyBufferToBuffer(
     //   storage.maxWaveSpeed,          // Source buffer
     //   0,                  // Source offset
@@ -700,6 +710,10 @@ texture-formats-tier1: ${textureTier1}
     //   0,                  // Destination offset
     //   4          // Size to copy
     // );
+    const postPass = postprocessingTimingHelper.beginComputePass(encoder);
+    createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
+    createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
+    postPass.end();
 
     const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
     renderPass.setPipeline(renderPipelines[gridDisplayMode]);
@@ -707,8 +721,7 @@ texture-formats-tier1: ${textureTier1}
     renderPass.draw(numVertices);
     renderPass.end();
 
-    const commandBuffer = encoder.finish();
-    device.queue.submit([commandBuffer]);
+    device.queue.submit([encoder.finish()]);
 
     // await stagingBuffer.mapAsync(GPUMapMode.READ);
     // const copyArrayBuffer = stagingBuffer.getMappedRange();
@@ -717,14 +730,8 @@ texture-formats-tier1: ${textureTier1}
     // const resultValues = new Float32Array(data);
     // console.log(resultValues);
 
-    // if (run) {
-    //   computeTimingHelper.getResult().then(gpuTime => computeTime += (gpuTime / 1e6 - computeTime) / filterStrength);
-    // } else {
-    //   computeTime = 0;
-    // }
     renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime - renderTime) / filterStrength);
     postprocessingTimingHelper.getResult().then(gpuTime => postprocessingTime += (gpuTime - postprocessingTime) / filterStrength);
-    reductionTimingHelper.getResult().then(gpuTime => cflTime += (gpuTime - cflTime) / filterStrength);
 
     gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
@@ -740,7 +747,6 @@ texture-formats-tier1: ${textureTier1}
     gui.io.frameTime(deltaTime);
     // gui.io.computeTime();
     gui.io.postTime(postprocessingTime / 1e6);
-    gui.io.cflTime(cflTime / 1e6);
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
     gui.io.stepsPerFrame(stepsPerFrame);
