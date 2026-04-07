@@ -67,10 +67,6 @@ function generateObjectBoundary(t, R = 0.2, N = 4, F = 0.1, a = 0, xOffset = -0.
   // normalize to [0, 1]
   t /= gridVertexCount[0];
   t *= 2 * Math.PI;
-  // const x = 0.1 * Math.cos(t) + xOffset;
-  // const y = 0.1 * Math.sin(t);
-  // const x = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.cos(t);
-  // const y = (0.1 + 0.1 * Math.abs(Math.cos(t))) * Math.sin(t);
 
   const b = 2 * Math.PI / N;
   const r = R / Math.cos(((t + a + b) % b) - Math.PI / N);
@@ -102,10 +98,6 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
     return [(t*2-1) * lengthRatio, -1];
   }
 }
-// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, .1, 0*Math.PI/4, -0.7));
-// const objectCoords = sampleAirfoil(whitcombIntegral, gridVertexCount[0], 0.3, -0.7);
-// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7));
-// const objectCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7));
 
 const objectCoords = {
   "polygon": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 4, .1, 0*Math.PI/4, -0.7)),
@@ -143,7 +135,7 @@ function updateGridBoundaries(objCoords = objectCoords["polygon"], boundCoords =
     gridBoundaryData[rightBoundary] = 0;
     gridBoundaryData[rightBoundary + 1] = y;
   }
-  // need solution for corners - 
+  // need solution for corners - negative for solid boundary?
 }
 updateGridBoundaries();
 

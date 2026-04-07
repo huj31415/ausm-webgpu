@@ -110,7 +110,7 @@ fn main(
 }
 `;
 
-// finalize grid by cell areas from grid points using jacobian and initialize state variables
+// finalize grid, compute face lengths, cell areas, todo: calculate face normals
 // run for each cell center
 const gridFinalizeShaderCode = /* wgsl */`
 ${uni.uniformStruct}
@@ -292,7 +292,12 @@ fn main(
 }
 `;
 
-const fluxUtilsCode = /* wgsl */`
+// common to all flux calculations
+// run for each face, Mx(N+1) for vertical faces, (M+1)xN for horizontal faces
+// vertical flux calculated for face between (x, y) and (x, y+1), horizontal flux calculated for face between (x, y) and (x+1, y)
+// vertical - face at a given index is below cell at that index (using shifted index for ghost cells)
+// calculate face normal and left/right rho, u, u_normal, p, h
+const fluxInterfaceStateCode = (vertical) => /* wgsl */`
 ${uni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> uni: Uniforms;
@@ -300,9 +305,6 @@ ${uni.uniformStruct}
 @group(0) @binding(2) var gridBoundaries: texture_2d<i32>; // rg16sint
 @group(0) @binding(3) var state: texture_2d<f32>; // rgba32float
 @group(0) @binding(4) var flux: texture_storage_2d<rgba32float, write>;
-
-override WG_X: u32;
-override WG_Y: u32;
 
 // shift for ghost cells and account for o-grid wrapping
 fn loadState(idx: vec2i) -> vec4f {
@@ -339,14 +341,17 @@ fn vanAlbadaLimiter(r: vec4f) -> vec4f {
   let r2 = r * r;
   return (r2 + r) / (r2 + 1.0);
 }
-`;
 
-// common to all flux calculations
-// run for each face, Mx(N+1) for vertical faces, (M+1)xN for horizontal faces
-// vertical flux calculated for face between (x, y) and (x, y+1), horizontal flux calculated for face between (x, y) and (x+1, y)
-// vertical - face at a given index is below cell at that index (using shifted index for ghost cells)
-// calculate face normal and left/right rho, u, u_normal, p, h
-const fluxInterfaceStateCode = (vertical) => /* wgsl */`
+override WG_X: u32;
+override WG_Y: u32;
+
+var<workgroup> localStates: array<vec4f, WG_X * (WG_Y + 3)>;
+
+@compute @workgroup_size(WG_X, WG_Y)
+fn main(
+  @builtin(global_invocation_id) gid: vec3u,
+  @builtin(local_invocation_id) lid: vec3u
+) {
   let gammaMinus1 = (uni.gamma - 1.0);
 
   let cellIdx = vec2i(gid.xy);
@@ -375,6 +380,32 @@ const fluxInterfaceStateCode = (vertical) => /* wgsl */`
   let Q_L2primitive = toPrimitive(Q_L2);
   let Q_Rprimitive = toPrimitive(Q_R);
   let Q_R2primitive = toPrimitive(Q_R2);
+
+  // relative to current cell:
+  // y-2: Q_L2
+  // y-1: Q_L
+  // y+0: Q_R
+  // y+1: Q_R2
+  // let localIdx = (lid.y + 2) * WG_X + lid.x;
+
+  // let Q_Rprimitive = toPrimitive(loadState(cellIdx));
+  // localStates[localIdx] = Q_Rprimitive;
+
+  // if (lid.y == WG_Y - 1) {
+  //   localStates[localIdx + WG_X] = toPrimitive(loadState(cellIdx + vec2i(${vertical ? "0, 1" : "1, 0"}))); // Q_R2
+  // }
+  // // first 2 rows of workgroup each load 1 extra row for Q_L and Q_L2, with clamping for object boundary handled in loadState
+  // if (lid.y <= 1) {
+  //   // y=1 -> Q_L halo
+  //   // y=0 -> Q_L2 halo
+  //   localStates[localIdx - 2 * WG_X] = toPrimitive(loadState(cellIdx - vec2i(${vertical ? "0, 2" : "2, 0"})));
+  // }
+  
+  // workgroupBarrier();
+
+  // let Q_Lprimitive = localStates[localIdx - WG_X];
+  // let Q_L2primitive = localStates[localIdx - 2 * WG_X];
+  // let Q_R2primitive = localStates[localIdx + WG_X];
 
   var Q_LMUSCLprimitive = Q_Lprimitive;
   var Q_RMUSCLprimitive = Q_Rprimitive;
@@ -410,41 +441,7 @@ const fluxInterfaceStateCode = (vertical) => /* wgsl */`
 // "A sequel to AUSM, Part II: AUSM+-up for all speeds", Liou 2006, sec. 3.3
 // https://www.sciencedirect.com/science/article/pii/S0021999105004274
 const AUSMupFluxShaderCode = (vertical) => /* wgsl */`
-${fluxUtilsCode}
-
-// fn M_1 (M: f32, plusOrMinus: f32) -> f32 {
-//   return 0.5 * (M + plusOrMinus * abs(M));
-// }
-
-// fn M_2 (M: f32, plusOrMinus: f32) -> f32 {
-//   return plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus);
-// }
-
-// fn M_4(M: f32, plusOrMinus: f32) -> f32 {
-//   return select(
-//     // 0.5 * (M + plusOrMinus * abs(M)),
-//     plusOrMinus * max(0.0, plusOrMinus * M),
-//     // M_2(M, plusOrMinus) * (1 - plusOrMinus * 2 * M_2(M, -plusOrMinus)), // beta * 16 = 2
-//     (plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus)) * (1 + 0.5 * (M - plusOrMinus) * (M - plusOrMinus)), // beta * 16 = 2
-//     abs(M) < 1.0
-//   );
-// }
-
-// fn P_5(M: f32, alpha4: f32, plusOrMinus: f32) -> f32 {
-//   return select(
-//     // 0.5 * (M + plusOrMinus * abs(M)) / M,
-//     step(0.0, plusOrMinus * M),
-//     // M_2(M, plusOrMinus) * ((plusOrMinus * 2 - M) - plusOrMinus * alpha * M * M_2(M, -plusOrMinus)),
-//     (plusOrMinus * 0.25 * (M + plusOrMinus) * (M + plusOrMinus)) * ((plusOrMinus * 2 - M) + alpha4 * M * (M - plusOrMinus) * (M - plusOrMinus)),
-//     abs(M) < 1.0
-//   );
-// }
-
-@compute @workgroup_size(WG_X, WG_Y)
-fn main(
-  @builtin(global_invocation_id) gid: vec3u
-) {
-  ${fluxInterfaceStateCode(vertical)}
+${fluxInterfaceStateCode(vertical)}
   let M_inf2 = dot(uni.inflowV, uni.inflowV) / (uni.gamma * uni.inPressure / rho_L);
   let sigma = 1.0;
 
@@ -518,21 +515,7 @@ const AUSMup_horizontalFluxShaderCode = AUSMupFluxShaderCode(false);
 // Towards shock-stable and accurate hypersonic heating computations: A new pressure flux for AUSM-family schemes, Kitamura and Shima 2013
 // https://www.sciencedirect.com/science/article/pii/S0021999113001769
 const SLAUFluxShaderCode = (vertical, version=2) => /* wgsl */`
-${fluxUtilsCode}
-
-fn f_p(M: f32, plusOrMinus: f32) -> f32 {
-  return 0.5 * select(
-    1 + plusOrMinus * sign(M),
-    0.5 * (M + plusOrMinus) * (M + plusOrMinus) * (2 - plusOrMinus * M),
-    abs(M) < 1.0
-  );
-}
-
-@compute @workgroup_size(WG_X, WG_Y)
-fn main(
-  @builtin(global_invocation_id) gid: vec3u
-) {
-  ${fluxInterfaceStateCode(vertical)}
+${fluxInterfaceStateCode(vertical)}
 
   let a_L = sqrt(uni.gamma * max(p_L, 1e-10) / max(rho_L, 1e-10));
   let a_R = sqrt(uni.gamma * max(p_R, 1e-10) / max(rho_R, 1e-10));
@@ -558,8 +541,8 @@ fn main(
     is_super
   ));
 
-  let f_p_plus = f_p_plusminus.x;//f_p(M_L, 1);
-  let f_p_minus = f_p_plusminus.y;//f_p(M_R, -1);
+  let f_p_plus = f_p_plusminus.x;
+  let f_p_minus = f_p_plusminus.y;
   let P_interface = 0.5 * ((f_p_plus - f_p_minus) * (p_L - p_R) + ${version == 2
     ? "(p_L + p_R) + (Uarc_unclamped * (f_p_plus + f_p_minus - 1) * (rho_L + rho_R) * a_interface)); // eq 3.4 SLAU2"
     : "(1.0 + (1 - X) * (f_p_plus + f_p_minus - 1)) * (p_L + p_R)); // eq 2.3c SLAU original"
@@ -843,6 +826,8 @@ fn main(
       // vorticity
       let vorticity = (stateRight.z / stateRight.x - stateLeft.z / stateLeft.x) - (stateUp.y / stateUp.x - stateDown.y / stateDown.x); // dv/dx - du/dy, central difference with ghost cells
       color = vec4f(colorMapBRYW(vorticity * 0.5 + 0.5));
+      // let divergence = (stateRight.y / stateRight.x - stateLeft.y / stateLeft.x) + (stateUp.z / stateUp.x - stateDown.z / stateDown.x); // du/dx + dv/dy
+      // color = vec4f(colorMapBRYW(divergence * 0.5 + 0.5));
     }
     textureStore(vis, gid.xy, color);
     return;
