@@ -12,43 +12,40 @@ async function main() {
   const maxBufferSize = adapter.limits.maxBufferSize;
   const maxStorageBufferBindingSize = adapter.limits.maxStorageBufferBindingSize;
   const f32filterable = adapter.features.has("float32-filterable");
-  const shaderf16 = adapter.features.has("shader-f16");
-  const subgroups = adapter.features.has("subgroups");
-  
-  if (!shaderf16 && !gpuInfo) {
-  }
+  // const shaderf16 = adapter.features.has("shader-f16");
+  // const subgroups = adapter.features.has("subgroups");
 
-  const floatPrecision = shaderf16 ? 16 : 32;
-  const f16header = shaderf16 ? `
-enable f16;
-// alias vec4h = vec4<f${floatPrecision}>;
-// alias vec3h = vec3<f${floatPrecision}>;
-// alias vec2h = vec2<f${floatPrecision}>;
-` : "";
+//   const floatPrecision = shaderf16 ? 16 : 32;
+//   const f16header = shaderf16 ? `
+// enable f16;
+// // alias vec4h = vec4<f${floatPrecision}>;
+// // alias vec3h = vec3<f${floatPrecision}>;
+// // alias vec2h = vec2<f${floatPrecision}>;
+// ` : "";
 
   const textureTier1 = adapter.features.has("texture-formats-tier1");
   if (!textureTier1 && !gpuInfo) alert("texture-formats-tier1 feature required");
-  const textureTier2 = adapter.features.has("texture-formats-tier2");
-  if (!textureTier2 && !gpuInfo) alert("texture-formats-tier2 unsupported, may reduce performance");
+  // const textureTier2 = adapter.features.has("texture-formats-tier2");
+  // if (!textureTier2 && !gpuInfo) alert("texture-formats-tier2 unsupported, may reduce performance");
 
   // compute workgroup size 32^2 = 1024 threads if maxComputeInvocationsPerWorkgroup >= 1024, otherwise 16^2 = 256 threads
-  const largeWg = maxComputeInvocationsPerWorkgroup >= 1024;
+  // const largeWg = maxComputeInvocationsPerWorkgroup >= 1024;
   // seems like smaller workgroups are faster
-  const [wg_x, wg_y] = largeWg ? [16, 16] : [16, 16];
+  const [wg_x, wg_y] = [16, 16]; //largeWg ? [32, 32] : [16, 16];
 
   if (!gpuInfo) {
     gui.addGroup("deviceInfo", "Device info", `
-<pre><span ${!largeWg ? "class='warn'" : ""}>maxComputeInvocationsPerWorkgroup: ${maxComputeInvocationsPerWorkgroup}
-workgroup: [${wg_x}, ${wg_y}]</span>
+<pre>maxComputeInvocationsPerWorkgroup: ${maxComputeInvocationsPerWorkgroup}
+workgroup: [${wg_x}, ${wg_y}]
 maxBufferSize: ${maxBufferSize}
 maxStorageBufferBindingSize: ${maxStorageBufferBindingSize}
 f32filterable: ${f32filterable}
-shader-f16: ${shaderf16}
-subgroups: ${subgroups}
 texture-formats-tier1: ${textureTier1}
-<span ${!textureTier2 ? "class='warn'" : ""}>texture-formats-tier2: ${textureTier2}</span>
 </pre>
     `);
+    // <span ${!textureTier2 ? "class='warn'" : ""}>texture-formats-tier2: ${textureTier2}</span>
+    // shader-f16: ${shaderf16}
+    // subgroups: ${subgroups}
     gpuInfo = true;
   }
 
@@ -58,9 +55,9 @@ texture-formats-tier1: ${textureTier1}
       ...(adapter.features.has("timestamp-query") ? ["timestamp-query"] : []),
       ...(f32filterable ? ["float32-filterable"] : []),
       ...(textureTier1 ? ["texture-formats-tier1"] : []),
-      ...(textureTier2 ? ["texture-formats-tier2"] : []),
-      ...(shaderf16 ? ["shader-f16"] : []),
-      ...(subgroups ? ["subgroups"] : []),
+      // ...(textureTier2 ? ["texture-formats-tier2"] : []),
+      // ...(shaderf16 ? ["shader-f16"] : []),
+      // ...(subgroups ? ["subgroups"] : []),
     ],
     requiredLimits: {
       maxComputeInvocationsPerWorkgroup: maxComputeInvocationsPerWorkgroup,
@@ -141,6 +138,9 @@ texture-formats-tier1: ${textureTier1}
   //   usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
   // });
 
+  const textureViews = Object.fromEntries(
+    Object.entries(storage).filter(([key, value]) => value instanceof GPUTexture).map(([key, texture]) => [key, texture.createView()])
+  );
 
   const uniformBuffer = uni.createBuffer(device);
 
@@ -149,7 +149,7 @@ texture-formats-tier1: ${textureTier1}
       layout: layout,
       compute: {
         module: device.createShaderModule({
-          code: f16header + shaderCode, //(floatPrecision, textureTier2 ? floatPrecision : 32),
+          code: shaderCode, // f16header +
           label: `${name} compute module`
         }),
         constants: {
@@ -166,72 +166,72 @@ texture-formats-tier1: ${textureTier1}
     layout: gridInterpolationComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.gridPoints0.createView() },
-      { binding: 2, resource: storage.gridPoints1.createView() },
-      { binding: 3, resource: storage.gridBoundaries.createView() },
+      { binding: 1, resource: textureViews.gridPoints0 },
+      { binding: 2, resource: textureViews.gridPoints1 },
+      { binding: 3, resource: textureViews.gridBoundaries },
     ],
     label: "grid interpolation compute bind group"
   });
 
   const gridEllipticPoissonComputePipeline = newComputePipeline(gridEllipticPoissonShaderCode, "grid elliptic poisson");
-  const gridEllipticPoissonBindGroup = (texIn, texOut) => device.createBindGroup({
+  const gridEllipticPoissonBindGroup = (texInView, texOutView) => device.createBindGroup({
     layout: gridEllipticPoissonComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: texIn.createView() },
-      { binding: 2, resource: texOut.createView() },
-      { binding: 3, resource: storage.gridBoundaries.createView() },
+      { binding: 1, resource: texInView },
+      { binding: 2, resource: texOutView },
+      { binding: 3, resource: textureViews.gridBoundaries },
     ],
     label: "grid elliptic poisson compute bind group"
   });
   const gridEllipticPoissonBindGroups = [
-    gridEllipticPoissonBindGroup(storage.gridPoints1, storage.gridPoints0),
-    gridEllipticPoissonBindGroup(storage.gridPoints0, storage.gridPoints1),
+    gridEllipticPoissonBindGroup(textureViews.gridPoints1, textureViews.gridPoints0),
+    gridEllipticPoissonBindGroup(textureViews.gridPoints0, textureViews.gridPoints1),
   ];
 
   const gridFinalizeComputePipeline = newComputePipeline(gridFinalizeShaderCode, "grid finalize");
-  const gridFinalizeBindGroup = (tex) => device.createBindGroup({
+  const gridFinalizeBindGroup = (pointTexView) => device.createBindGroup({
     layout: gridFinalizeComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: tex.createView() },
-      { binding: 2, resource: storage.gridBoundaries.createView() },
-      { binding: 3, resource: storage.gridArea.createView() },
-      { binding: 4, resource: storage.faceLengths.createView() },
-      { binding: 5, resource: storage.cellDistances.createView() },
+      { binding: 1, resource: pointTexView },
+      { binding: 2, resource: textureViews.gridBoundaries },
+      { binding: 3, resource: textureViews.gridArea },
+      { binding: 4, resource: textureViews.faceLengths },
+      { binding: 5, resource: textureViews.cellDistances },
     ],
     label: "grid finalize compute bind group"
   });
   const gridFinalizeBindGroups = [
-    gridFinalizeBindGroup(storage.gridPoints1),
-    gridFinalizeBindGroup(storage.gridPoints0),
+    gridFinalizeBindGroup(textureViews.gridPoints1),
+    gridFinalizeBindGroup(textureViews.gridPoints0),
   ];
   const prepareStateComputePipeline = newComputePipeline(prepareStateShaderCode, "prepare state");
   const prepareStateBindGroup = device.createBindGroup({
     layout: prepareStateComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.state0.createView() },
+      { binding: 1, resource: textureViews.state0 },
     ],
     label: "prepare state compute bind group"
   });
 
   const boundaryComputePipeline = newComputePipeline(boundaryShaderCode, "boundary condition");
-  const boundaryBindGroup = (stateIn, stateOut) => device.createBindGroup({
+  const boundaryBindGroup = (stateInView, stateOutView) => device.createBindGroup({
     layout: boundaryComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.gridPoints0.createView() },
-      { binding: 2, resource: storage.gridBoundaries.createView() },
-      { binding: 3, resource: stateIn.createView() },
-      { binding: 4, resource: stateOut.createView() },
+      { binding: 1, resource: textureViews.gridPoints0 },
+      { binding: 2, resource: textureViews.gridBoundaries },
+      { binding: 3, resource: stateInView },
+      { binding: 4, resource: stateOutView },
     ],
     label: "boundary compute bind group"
   });
   const boundaryBindGroups = [
-    boundaryBindGroup(storage.state2, storage.state0),
-    boundaryBindGroup(storage.state1, storage.state2),
-    boundaryBindGroup(storage.state2, storage.state1),
+    boundaryBindGroup(textureViews.state2, textureViews.state0),
+    boundaryBindGroup(textureViews.state1, textureViews.state2),
+    boundaryBindGroup(textureViews.state2, textureViews.state1),
   ];
 
   const fluxBindGroupLayout = device.createBindGroupLayout({
@@ -300,38 +300,38 @@ texture-formats-tier1: ${textureTier1}
     ],
   });
   let [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines.SLAU2;
-  const verticalFluxBindGroup = (state) => device.createBindGroup({
+  const verticalFluxBindGroup = (stateView) => device.createBindGroup({
     layout: fluxBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.gridPoints0.createView() },
-      { binding: 2, resource: storage.gridBoundaries.createView() },
-      { binding: 3, resource: state.createView() },
-      { binding: 4, resource: storage.fluxY.createView() },
+      { binding: 1, resource: textureViews.gridPoints0 },
+      { binding: 2, resource: textureViews.gridBoundaries },
+      { binding: 3, resource: stateView },
+      { binding: 4, resource: textureViews.fluxY },
     ],
     label: "vertical flux compute bind group"
   });
   const verticalFluxBindGroups = [
-    verticalFluxBindGroup(storage.state0),
-    verticalFluxBindGroup(storage.state2),
-    verticalFluxBindGroup(storage.state1),
+    verticalFluxBindGroup(textureViews.state0),
+    verticalFluxBindGroup(textureViews.state2),
+    verticalFluxBindGroup(textureViews.state1),
   ];
 
-  const horizontalFluxBindGroup = (state) => device.createBindGroup({
+  const horizontalFluxBindGroup = (stateView) => device.createBindGroup({
     layout: fluxBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.gridPoints0.createView() },
-      { binding: 2, resource: storage.gridBoundaries.createView() },
-      { binding: 3, resource: state.createView() },
-      { binding: 4, resource: storage.fluxX.createView() },
+      { binding: 1, resource: textureViews.gridPoints0 },
+      { binding: 2, resource: textureViews.gridBoundaries },
+      { binding: 3, resource: stateView },
+      { binding: 4, resource: textureViews.fluxX },
     ],
     label: "horizontal flux compute bind group"
   });
   const horizontalFluxBindGroups = [
-    horizontalFluxBindGroup(storage.state0),
-    horizontalFluxBindGroup(storage.state2),
-    horizontalFluxBindGroup(storage.state1),
+    horizontalFluxBindGroup(textureViews.state0),
+    horizontalFluxBindGroup(textureViews.state2),
+    horizontalFluxBindGroup(textureViews.state1),
   ];
 
   const residualComputePipeline = newComputePipeline(residualShaderCode, "residual compute");
@@ -339,11 +339,11 @@ texture-formats-tier1: ${textureTier1}
     layout: residualComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.fluxX.createView() },
-      { binding: 2, resource: storage.fluxY.createView() },
-      { binding: 3, resource: storage.residual.createView() },
-      { binding: 4, resource: storage.faceLengths.createView() },
-      { binding: 5, resource: storage.gridArea.createView() },
+      { binding: 1, resource: textureViews.fluxX },
+      { binding: 2, resource: textureViews.fluxY },
+      { binding: 3, resource: textureViews.residual },
+      { binding: 4, resource: textureViews.faceLengths },
+      { binding: 5, resource: textureViews.gridArea },
     ],
     label: "residual compute bind group"
   });
@@ -353,9 +353,9 @@ texture-formats-tier1: ${textureTier1}
     layout: integrationStage1ComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.residual.createView()},
-      { binding: 2, resource: storage.state0.createView() },
-      { binding: 3, resource: storage.state1.createView() },
+      { binding: 1, resource: textureViews.residual },
+      { binding: 2, resource: textureViews.state0 },
+      { binding: 3, resource: textureViews.state1 },
       { binding: 4, resource: { buffer: storage.maxWaveSpeed } },
     ],
     label: "integration stage 1 compute bind group"
@@ -366,10 +366,10 @@ texture-formats-tier1: ${textureTier1}
     layout: integrationStage2ComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.residual.createView()},
-      { binding: 2, resource: storage.state0.createView() },
-      { binding: 3, resource: storage.state1.createView() },
-      { binding: 4, resource: storage.state2.createView() },
+      { binding: 1, resource: textureViews.residual },
+      { binding: 2, resource: textureViews.state0 },
+      { binding: 3, resource: textureViews.state1 },
+      { binding: 4, resource: textureViews.state2 },
       { binding: 5, resource: { buffer: storage.maxWaveSpeed } },
     ],
     label: "integration stage 2 compute bind group"
@@ -380,10 +380,10 @@ texture-formats-tier1: ${textureTier1}
     layout: integrationStage3ComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.residual.createView()},
-      { binding: 2, resource: storage.state0.createView() },
-      { binding: 3, resource: storage.state1.createView() },
-      { binding: 4, resource: storage.state2.createView() },
+      { binding: 1, resource: textureViews.residual },
+      { binding: 2, resource: textureViews.state0 },
+      { binding: 3, resource: textureViews.state1 },
+      { binding: 4, resource: textureViews.state2 },
       { binding: 5, resource: { buffer: storage.maxWaveSpeed } },
     ],
     label: "integration stage 3 compute bind group"
@@ -394,10 +394,10 @@ texture-formats-tier1: ${textureTier1}
     layout: visualizationComputePipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.state2.createView() },
-      { binding: 2, resource: storage.faceLengths.createView() },
-      { binding: 3, resource: storage.gridArea.createView() },
-      { binding: 4, resource: storage.vis.createView() },
+      { binding: 1, resource: textureViews.state2 },
+      { binding: 2, resource: textureViews.faceLengths },
+      { binding: 3, resource: textureViews.gridArea },
+      { binding: 4, resource: textureViews.vis },
       { binding: 5, resource: { buffer: storage.waveSpeeds } },
     ],
     label: "visualization compute bind group"
@@ -497,8 +497,8 @@ texture-formats-tier1: ${textureTier1}
     layout: renderBindGroupLayout, //renderPipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: storage.gridPoints0.createView() },
-      { binding: 2, resource: storage.vis.createView() },
+      { binding: 1, resource: textureViews.gridPoints0 },
+      { binding: 2, resource: textureViews.vis },
       { binding: 3, resource: gridSampler },
     ],
   });
