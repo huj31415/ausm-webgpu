@@ -471,21 +471,20 @@ texture-formats-tier1: ${textureTier1}
       },
     ],
   });
+  const renderPipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [ renderBindGroupLayout ],
+  });
   
   const newRenderPipeline = (topology) => device.createRenderPipeline({
     label: `${topology} rendering pipeline`,
-    layout: device.createPipelineLayout({
-      bindGroupLayouts: [ renderBindGroupLayout ],
-    }),
+    layout: renderPipelineLayout,
     vertex: { module: renderModule },
     fragment: {
       module: renderModule,
       targets: [{ format: swapChainFormat }],
       constants: {}
     },
-    primitive: {
-      topology: topology,
-    },
+    primitive: { topology: topology },
   });
   const renderPipelines = [
     newRenderPipeline("triangle-strip"),
@@ -494,7 +493,7 @@ texture-formats-tier1: ${textureTier1}
   ]
 
   const renderBindGroup = device.createBindGroup({
-    layout: renderBindGroupLayout, //renderPipeline.getBindGroupLayout(0),
+    layout: renderBindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: textureViews.gridPoints0 },
@@ -505,16 +504,15 @@ texture-formats-tier1: ${textureTier1}
 
   const renderPassDescriptor = {
     label: 'render pass',
-    colorAttachments: [
-      {
-        clearValue: [0.1, 0.1, 0.1, 1],
-        loadOp: 'clear',
-        storeOp: 'store',
-      },
-    ]
+    colorAttachments: [{
+      clearValue: [0.1, 0.1, 0.1, 1],
+      loadOp: 'clear',
+      storeOp: 'store',
+    }]
   };
-  const filterStrength = 50;
+  const filterStrength = 20;
 
+  const computeTimingHelper = new TimingHelper(device);
   const renderTimingHelper = new TimingHelper(device);
   const postprocessingTimingHelper = new TimingHelper(device);
   const gridTimingHelper = new TimingHelper(device);
@@ -533,7 +531,7 @@ texture-formats-tier1: ${textureTier1}
   }
 
   // get target frame time by measuring the time of two consecutive frames
-  let targetFrameTime = 0;
+  targetFrameTime = 0;
   requestAnimationFrame((timestamp) => {
     let frameStartTime = timestamp;
     requestAnimationFrame((timestamp) => {
@@ -641,59 +639,42 @@ texture-formats-tier1: ${textureTier1}
 
     // simulate
     if (maxdt > 0) {
+      const computePass = computeTimingHelper.beginComputePass(encoder);
       for (let i = 0; i < stepsPerFrame; i++) {
         // state2 -> state0 (Qn)
-        encoder.copyTextureToTexture(
-          { texture: storage.state2 },
-          { texture: storage.state0 },
-          totalCellCount
-        );
-        const computePass1 = encoder.beginComputePass();
-        createComputePass(computePass1, boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
+        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
         // state0 -> fluxY
-        createComputePass(computePass1, verticalFluxComputePipeline, verticalFluxBindGroups[0], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[0], wgDispatchSize(yFluxTexSize));
         // state0 -> fluxX
-        createComputePass(computePass1, horizontalFluxComputePipeline, horizontalFluxBindGroups[0], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[0], wgDispatchSize(xFluxTexSize));
         // fluxX, fluxY -> residual
-        createComputePass(computePass1, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn) + residual -> state1 (Q1)
-        createComputePass(computePass1, integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
-        computePass1.end();
+        createComputePass(computePass, integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
+
         // state1 -> state2 (Q1)
-        encoder.copyTextureToTexture(
-          { texture: storage.state1 },
-          { texture: storage.state2 },
-          totalCellCount
-        );
-        const computePass2 = encoder.beginComputePass();
-        createComputePass(computePass2, boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
+        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
         // state2 -> fluxY
-        createComputePass(computePass2, verticalFluxComputePipeline, verticalFluxBindGroups[1], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[1], wgDispatchSize(yFluxTexSize));
         // state2 -> fluxX
-        createComputePass(computePass2, horizontalFluxComputePipeline, horizontalFluxBindGroups[1], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[1], wgDispatchSize(xFluxTexSize));
         // fluxX, fluxY -> residual
-        createComputePass(computePass2, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn), state1 (Q1) + residual -> state2 (Q2)
-        createComputePass(computePass2, integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
-        computePass2.end();
+        createComputePass(computePass, integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
+
         // state2 -> state1 (Q2)
-        encoder.copyTextureToTexture(
-          { texture: storage.state2 },
-          { texture: storage.state1 },
-          totalCellCount
-        );
-        const computePass3 = encoder.beginComputePass();
-        createComputePass(computePass3, boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
+        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
         // state1 -> fluxY
-        createComputePass(computePass3, verticalFluxComputePipeline, verticalFluxBindGroups[2], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[2], wgDispatchSize(yFluxTexSize));
         // state1 -> fluxX
-        createComputePass(computePass3, horizontalFluxComputePipeline, horizontalFluxBindGroups[2], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[2], wgDispatchSize(xFluxTexSize));
         // fluxX, fluxY -> residual
-        createComputePass(computePass3, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
         // state0 (Qn), state1 (Q2) + residual -> state2 (Qn+1)
-        createComputePass(computePass3, integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
-        computePass3.end();
+        createComputePass(computePass, integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
       }
+      computePass.end();
       // update inflow velocity, will be 1 frame behind
       actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
       const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
@@ -701,7 +682,7 @@ texture-formats-tier1: ${textureTier1}
       // compute inflow state
       const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
       uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
-    }
+    } // else { computeTime = 0; }
 
     // encoder.copyBufferToBuffer(
     //   storage.maxWaveSpeed,          // Source buffer
@@ -730,8 +711,9 @@ texture-formats-tier1: ${textureTier1}
     // const resultValues = new Float32Array(data);
     // console.log(resultValues);
 
-    renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime - renderTime) / filterStrength);
+    computeTimingHelper.getResult().then(gpuTime => computeTime += (gpuTime - computeTime) / filterStrength);
     postprocessingTimingHelper.getResult().then(gpuTime => postprocessingTime += (gpuTime - postprocessingTime) / filterStrength);
+    renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime - renderTime) / filterStrength);
 
     gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
@@ -745,7 +727,7 @@ texture-formats-tier1: ${textureTier1}
     gui.io.fps(fps);
     gui.io.jsTime(jsTime);
     gui.io.frameTime(deltaTime);
-    // gui.io.computeTime();
+    gui.io.computeTime(computeTime / 1e6);
     gui.io.postTime(postprocessingTime / 1e6);
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);

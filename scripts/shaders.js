@@ -212,7 +212,7 @@ fn main(
   let isObjectBoundary = gid.y == 0;
   let isOuterBoundary = gid.y > simDomain.y;
 
-  if (!isObjectBoundary && !isOuterBoundary) { return; } // only compute for ghost cells, skip interior
+  // if (!isObjectBoundary && !isOuterBoundary) { return; } // only compute for ghost cells, skip interior
 
   let rightIdx = (gid.x + 1) % simDomain.x;
   
@@ -224,7 +224,7 @@ fn main(
   let tangent = normalize(vtx1 - vtx2);
   let normal = vec2f(-tangent.y, tangent.x);
 
-  var ghostState: vec4f; // = textureLoad(stateIn, gid.xy, 0); // state copied before boundary dispatch
+  var ghostState = textureLoad(stateIn, gid.xy, 0); // pass through by default for non-boundary cells, will be overwritten for ghost cells
 
   if (isObjectBoundary) {
     // handle object boundary - reflect velocity for slip condition

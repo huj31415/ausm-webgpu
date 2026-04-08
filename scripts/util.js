@@ -62,7 +62,7 @@ const storage = {
   vis: null, // (M)x(N)
 }
 
-let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = gridTime = 0;
+let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = gridTime = targetFrameTime = computeTime = 0;
 let poissonTime = 0;
 let maxdt = 1e-4;
 let oldDt;
@@ -119,8 +119,8 @@ gui.addHalfWidthGroups("perfL", "perfR", "perf");
 gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
 gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
 gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
-gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perfR");
-// gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfL");
+gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perfL");
+gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfR");
 gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfR");
 gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfR");
 
