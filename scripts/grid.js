@@ -9,7 +9,7 @@ let poissonIterations = 0;
 let maxPoissonIterations = 10000;
 // let gridFinalized = false;
 
-const simulationDomain = [512, 384]; // circumferential * radial for o grid
+const simulationDomain = [512 - 2, 384 - 3]; // circumferential * radial for o grid, keep the wg dispatch size constant by setting the largest texture size to a mulitple of wg size
 const gridVertexCount = [(simulationDomain[0]), (simulationDomain[1] + 1)];
 const xFluxTexSize = [(simulationDomain[0] + 1), (simulationDomain[1])];
 const yFluxTexSize = [(simulationDomain[0]), (simulationDomain[1] + 1)];
@@ -102,7 +102,7 @@ function generateRectangularOuterBoundary(t, lengthRatio) {
 const objectCoords = {
   "polygon": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 4, .1, 0*Math.PI/4, -0.7)),
   "circle": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateObjectBoundary(t, 0.1, 400, 1, 0, -0.7)),
-  "naca-4": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4415, 0.2, -0.7)),
+  "naca-4": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, 4412, 0.2, -0.7)),
   "airfoil-dat": sampleAirfoil(whitcombIntegral, gridVertexCount[0], 0.3, -0.7),
   "sears-haack": new Array(gridVertexCount[0]).fill(0).map((_, t) => generateSearsHaackBoundary(t, 0.00005, 0.4, -0.7)),
 };
@@ -156,7 +156,7 @@ gui.addFileInput("airfoilDatFile", "Airfoil .dat file", "grid", (file) => {
   }
   reader.readAsText(file);
 });
-gui.addNumericInput("naca4", false, "NACA 4-digit", { min: 1, max: 9999, step: 1, val: 4415, float: 0 }, "grid", (value) => {
+gui.addNumericInput("naca4", false, "NACA 4-digit", { min: 1, max: 9999, step: 1, val: 4412, float: 0 }, "grid", (value) => {
   objectCoords["naca-4"] = new Array(gridVertexCount[0]).fill(0).map((_, t) => generateNACA4Boundary(t, value, 0.3, -0.7)); // should do this only when loading new grid
 });
 gui.addButton("updateGrid", "Update grid", true, "grid", () => {
