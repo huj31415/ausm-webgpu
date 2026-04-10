@@ -67,6 +67,7 @@ let poissonTime = 0;
 let maxdt = 1e-4;
 let oldDt;
 let stepsPerFrame = 70;
+let autoStepsPerFrame = true;
 
 // will be set in main.js after pipelines are created
 let prepareState = () => {};
@@ -146,6 +147,16 @@ gui.addNumericInput("maxdt", true, "Max dt (exp10)", { min: -6, max: 0, step: 0.
   maxdt = 10 ** value;
   uni.values.maxdt.set([maxdt]);
 });
+gui.addCheckbox("autoSimSpeed", "Auto sim speed", true, "sim", (value) => {
+  document.getElementById("dtPerFrame-container").style.display = value ? "none" : "";
+  autoStepsPerFrame = value;
+  if (!value) stepsPerFrame = gui.io.dtPerFrame.value;
+});
+gui.addNumericInput("dtPerFrame", true, "dt/frame", { min: 1, max: 100, step: 1, val: stepsPerFrame, float: 0 }, "sim", (value) => {
+  stepsPerFrame = value;
+});
+document.getElementById("dtPerFrame-container").style.display = "none";
+
 gui.addNumericOutput("mach", "Mach number", "", 2, "sim");
 gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 20, step: 0.01, val: inflowVel, float: 2 }, "sim", (value) => {
   inflowVel = value;
@@ -177,9 +188,6 @@ gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => {
   uni.values.muscl.set([value ? 1 : 0]);
 });
 
-// gui.addNumericInput("dtPerFrame", true, "dt/frame", { min: 10, max: 500, step: 10, val: stepsPerFrame, float: 0 }, "sim", (value) => {
-//   stepsPerFrame = value;
-// });
 gui.addButton("toggleSim", "Play / Pause", false, "sim", () => {
   if (oldDt) {
     maxdt = oldDt;

@@ -535,7 +535,7 @@ texture-formats-tier1: ${textureTier1}
   requestAnimationFrame((timestamp) => {
     let frameStartTime = timestamp;
     requestAnimationFrame((timestamp) => {
-      targetFrameTime = timestamp - frameStartTime - 2; // subtract 2ms for overhead
+      targetFrameTime = timestamp - frameStartTime - 1; // subtract 1ms for overhead
     });
   });
 
@@ -618,17 +618,28 @@ texture-formats-tier1: ${textureTier1}
 
   prepareGrid();
 
+  let [rawComputeTime, rawRenderTime, rawPostprocessingTime, avgTimePerStep] = [0, 0, 0, 1];
   function render() {
     // update performance info
     const startTime = performance.now();
     deltaTime += Math.min(startTime - lastFrameTime - deltaTime, 1e4) / filterStrength;
     fps += (1e3 / deltaTime - fps) / filterStrength;
 
+    const run = maxdt > 0;
     // adaptive time stepping: adjust stepsPerFrame based on how long the last frame took compared to the target frame time
-    const timeDifference = (startTime - lastFrameTime) - targetFrameTime;
-    stepsPerFrame = Math.max(1, Math.round(stepsPerFrame - Math.min(100, timeDifference) * 0.05));
-    if (timeDifference < -1) stepsPerFrame += 1;
+    const totalTime = (rawComputeTime + rawRenderTime + rawPostprocessingTime) / 1e6;
+    if (autoStepsPerFrame && totalTime > 0 && run) {
+      const timeDifference = (startTime - lastFrameTime) - targetFrameTime;
+      // const timeDifference = totalTime - targetFrameTime;
+      // avgTimePerStep = totalTime / stepsPerFrame * 0.1 + avgTimePerStep * 0.9;
+      // const stepDifference = timeDifference / avgTimePerStep;
+      if (totalTime < targetFrameTime - 2) stepsPerFrame += 1;
+      stepsPerFrame = Math.max(1, Math.round(stepsPerFrame - Math.min(100, timeDifference) * 0.05));
+      // stepsPerFrame -= stepDifference * 0.1; //Math.max(1, Math.round(stepsPerFrame - Math.min(100, timeDifference) * 0.05));
+    }
+    
     lastFrameTime = startTime;
+
 
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
@@ -638,8 +649,8 @@ texture-formats-tier1: ${textureTier1}
     const encoder = device.createCommandEncoder();
 
     // simulate
-    if (maxdt > 0) {
-      const computePass = computeTimingHelper.beginComputePass(encoder);
+    const computePass = computeTimingHelper.beginComputePass(encoder);
+    if (run) {
       for (let i = 0; i < stepsPerFrame; i++) {
         // state2 -> state0 (Qn)
         createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
@@ -674,7 +685,6 @@ texture-formats-tier1: ${textureTier1}
         // state0 (Qn), state1 (Q2) + residual -> state2 (Qn+1)
         createComputePass(computePass, integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
       }
-      computePass.end();
       // update inflow velocity, will be 1 frame behind
       actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
       const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
@@ -683,6 +693,7 @@ texture-formats-tier1: ${textureTier1}
       const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
       uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
     } // else { computeTime = 0; }
+    computePass.end();
 
     // encoder.copyBufferToBuffer(
     //   storage.maxWaveSpeed,          // Source buffer
@@ -711,9 +722,12 @@ texture-formats-tier1: ${textureTier1}
     // const resultValues = new Float32Array(data);
     // console.log(resultValues);
 
-    computeTimingHelper.getResult().then(gpuTime => computeTime += (gpuTime - computeTime) / filterStrength);
-    postprocessingTimingHelper.getResult().then(gpuTime => postprocessingTime += (gpuTime - postprocessingTime) / filterStrength);
-    renderTimingHelper.getResult().then(gpuTime => renderTime += (gpuTime - renderTime) / filterStrength);
+    computeTimingHelper.getResult().then(gpuTime => rawComputeTime = gpuTime);
+    postprocessingTimingHelper.getResult().then(gpuTime => rawPostprocessingTime = gpuTime);
+    renderTimingHelper.getResult().then(gpuTime => rawRenderTime = gpuTime);
+    computeTime += (rawComputeTime - computeTime) / filterStrength;
+    postprocessingTime += (rawPostprocessingTime - postprocessingTime) / filterStrength;
+    renderTime += (rawRenderTime - renderTime) / filterStrength;
 
     gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
@@ -732,7 +746,14 @@ texture-formats-tier1: ${textureTier1}
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
     gui.io.stepsPerFrame(stepsPerFrame);
-
+    // const totalTime = (rawComputeTime + rawPostprocessingTime + rawRenderTime) / 1e6;
+    // if (maxdt > 0 && totalTime > 0) {
+    //   const timeDiff = totalTime - targetFrameTime;
+    //   avgTimePerStep = (totalTime / stepsPerFrame) * 0.1 + 0.9 * avgTimePerStep;
+    //   const targetSteps = Math.floor(targetFrameTime / avgTimePerStep);
+    //   stepsPerFrame = (stepsPerFrame + (targetSteps - stepsPerFrame) * 0.1);
+    //   console.log(targetSteps, stepsPerFrame, totalTime, timeDiff);
+    // }
   }, 100);
 
 
