@@ -12,12 +12,12 @@ This project implements AUSM-family finite volume schemes on curvilinear body-fi
 * Automatic CFL-based dt calculation
 * Automatic steps/frame adjustment based on frame rate
 * NACA 4-digit airfoil generator
-* Airfoil .dat loader
+* Airfoil .dat loader, supports Selig and Lednicer formats
 * Render numerical schlieren, density, temp, pressure, mach, velocity, and more
 * Contour rendering in frag shader
 
 ### Real-time interactive performance
-* 60 fps @ ~65 steps/frame (~4000 steps/sec) on RTX 4070 mobile with 512\*384 grid size
+* 60 fps @ ~85 steps/frame (~5000 steps/sec) on RTX 4070 mobile with 512\*384 grid size on Chrome
   * Simulation timestep is constrained by CFL condition to maintain numerical stability
 * Compute and rendering are done entirely on GPU with minimal CPU-GPU data transfer
 * If you are on a laptop you may need to assign your browser to use discrete GPU for good performance
@@ -27,7 +27,7 @@ This project implements AUSM-family finite volume schemes on curvilinear body-fi
 * C grid generation
 * Hyperbolic PDE-based grid generation
 * Boundary pressure based lift and drag calculation
-* Explicitly define bind group layouts to allow running on devices that don't support `f32-filterable`
+* Explicitly define bind group layouts to allow running on devices that don't support the `float32-filterable` feature
 
 ### Potential future features
 * Flow field visualization
@@ -38,7 +38,7 @@ This project implements AUSM-family finite volume schemes on curvilinear body-fi
 
 Kitamura, K., & Shima, E. (2013). Towards shock-stable and accurate hypersonic heating computations: A new pressure flux for AUSM-family schemes. Journal of Computational Physics, 245, 62–83. https://doi.org/10.1016/j.jcp.2013.02.046
 
-Liou, M. (n.d.). A sequel to AUSM, Part II: AUSM+-up for all speeds. Journal of Computational Physics, 214(1), 137–170. https://doi.org/10.1016/j.jcp.2005.09.020
+Liou, M. (2006). A sequel to AUSM, Part II: AUSM+-up for all speeds. Journal of Computational Physics, 214(1), 137–170. https://doi.org/10.1016/j.jcp.2005.09.020
 
 Shima, E., & Kitamura, K. (2011). Parameter-Free Simple Low-Dissipation AUSM-Family Scheme for all speeds. AIAA Journal, 49(8), 1693–1709. https://doi.org/10.2514/1.j050905
 
