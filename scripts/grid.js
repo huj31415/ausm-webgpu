@@ -23,8 +23,8 @@ const gridDisplayProperties = Object.freeze({
 let [gridDisplayMode, numVertices] = gridDisplayProperties.full;
 uni.values.gridDisplayMode.set([gridDisplayMode]);
 
-gui.io.gridResX(simulationDomain[0]);
-gui.io.gridResY(simulationDomain[1]);
+gui.io.gridResX(totalCellCount[0]);
+gui.io.gridResY(totalCellCount[1]);
 gui.addDropdown("gridDisplayMode", "Grid display mode", ["full", "mesh", "vertices"], "grid", null, (value) => {
   [gridDisplayMode, numVertices] = gridDisplayProperties[value];
   uni.values.gridDisplayMode.set([gridDisplayMode]);
