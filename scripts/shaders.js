@@ -837,7 +837,7 @@ fn main(
     // relative velocity
     let vRelAbs = abs(velocity - uni.inflowV) * uni.visMultiplier;
     let adjSpeed = speed * uni.visMultiplier;
-    let velocityRGB = vec3f(vRelAbs, velocity.y) / vec3f(vRelAbs + 1, abs(velocity.y) + 1);
+    let velocityRGB = vec3f(vRelAbs, velocity.y) / (vec3f(vRelAbs, abs(velocity.y)) + 1);
     textureStore(vis, gid.xy, vec4f(velocityRGB, adjSpeed / (adjSpeed + uni.contourCompression)));
     return;
   }

@@ -93,7 +93,7 @@ const simDisplayModes = Object.freeze({
   "mach/m_inf": 6,
   velocity: 7,
   entropy: 8,
-  pressureLoss: 9,
+  // pressureLoss: 9,
 });
 
 const solvers = Object.freeze({
@@ -136,7 +136,7 @@ gui.addDropdown("solver", "Flux solver", ["SLAU2", "SLAU", "AUSM+-up"], "sim", {
   "SLAU": [],
   "AUSM+-up": ["K_p", "K_u"],
 }, (value) => updateSolver(value));
-gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density", "temperature", "pressure", "mach", "mach/m_inf", "velocity", "vorticity", "entropy", "pressureLoss"], "sim", null, (value) => {
+gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density", "temperature", "pressure", "mach", "mach/m_inf", "velocity", "vorticity", "entropy"], "sim", null, (value) => {
   displayMode = simDisplayModes[value];
   uni.values.simDisplayMode.set([displayMode]);
 });
