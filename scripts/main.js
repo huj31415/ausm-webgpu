@@ -79,7 +79,7 @@ texture-formats-tier1: ${textureTier1}
   // restart if device crashes
   device.lost.then((info) => {
     if (info.reason != "destroyed") {
-      hardReset();
+      // hardReset();
       console.warn("WebGPU device lost, reinitializing.");
     }
   });
@@ -521,7 +521,10 @@ texture-formats-tier1: ${textureTier1}
     Math.ceil(texSize[0] / wg_x),
     Math.ceil(texSize[1] / wg_y)
   ];
-
+  const totalDispatchSize = wgDispatchSize(totalCellCount);
+  const yFluxDispatchSize = wgDispatchSize(yFluxTexSize);
+  const xFluxDispatchSize = wgDispatchSize(xFluxTexSize);
+  const simulationDomainDispatchSize = wgDispatchSize(simulationDomain);
 
   function createComputePass(pass, pipeline, bindGroup, dispatchSize = wgDispatchSize(simulationDomain)) {
     pass.setPipeline(pipeline);
@@ -532,16 +535,13 @@ texture-formats-tier1: ${textureTier1}
 
   // get target frame time by measuring the time of two consecutive frames
   targetFrameTime = 0;
-  requestAnimationFrame((timestamp) => {
-    let frameStartTime = timestamp;
+  requestAnimationFrame((frameStartTime) => {
     requestAnimationFrame((timestamp) => {
       targetFrameTime = timestamp - frameStartTime - 1; // subtract 1ms for overhead
     });
   });
 
-  updateSolver = (solver) => {
-    [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
-  }
+  updateSolver = (solver) => [verticalFluxComputePipeline, horizontalFluxComputePipeline] = fluxPipelines[solver];
 
   prepareState = () => {
     uni.update(device.queue);
@@ -620,6 +620,7 @@ texture-formats-tier1: ${textureTier1}
 
   let [rawComputeTime, rawRenderTime, rawPostprocessingTime, avgTimePerStep] = [0, 0, 0, 1];
   const cflReader = new AsyncBufferReader(device, 4, 3);
+
   function render() {
     // update performance info
     const startTime = performance.now();
@@ -654,37 +655,37 @@ texture-formats-tier1: ${textureTier1}
     if (run) {
       for (let i = 0; i < stepsPerFrame; i++) {
         // state2 -> state0 (Qn)
-        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[0], wgDispatchSize(totalCellCount));
+        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[0], totalDispatchSize);
         // state0 -> fluxY
-        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[0], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[0], yFluxDispatchSize);
         // state0 -> fluxX
-        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[0], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[0], xFluxDispatchSize);
         // fluxX, fluxY -> residual
-        createComputePass(computePass, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, residualComputePipeline, residualBindGroup, simulationDomainDispatchSize);
         // state0 (Qn) + residual -> state1 (Q1)
-        createComputePass(computePass, integrationStage1ComputePipeline, integrationStage1BindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, integrationStage1ComputePipeline, integrationStage1BindGroup, simulationDomainDispatchSize);
 
         // state1 -> state2 (Q1)
-        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[1], wgDispatchSize(totalCellCount));
+        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[1], totalDispatchSize);
         // state2 -> fluxY
-        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[1], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[1], yFluxDispatchSize);
         // state2 -> fluxX
-        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[1], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[1], xFluxDispatchSize);
         // fluxX, fluxY -> residual
-        createComputePass(computePass, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, residualComputePipeline, residualBindGroup, simulationDomainDispatchSize);
         // state0 (Qn), state1 (Q1) + residual -> state2 (Q2)
-        createComputePass(computePass, integrationStage2ComputePipeline, integrationStage2BindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, integrationStage2ComputePipeline, integrationStage2BindGroup, simulationDomainDispatchSize);
 
         // state2 -> state1 (Q2)
-        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[2], wgDispatchSize(totalCellCount));
+        createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[2], totalDispatchSize);
         // state1 -> fluxY
-        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[2], wgDispatchSize(yFluxTexSize));
+        createComputePass(computePass, verticalFluxComputePipeline, verticalFluxBindGroups[2], yFluxDispatchSize);
         // state1 -> fluxX
-        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[2], wgDispatchSize(xFluxTexSize));
+        createComputePass(computePass, horizontalFluxComputePipeline, horizontalFluxBindGroups[2], xFluxDispatchSize);
         // fluxX, fluxY -> residual
-        createComputePass(computePass, residualComputePipeline, residualBindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, residualComputePipeline, residualBindGroup, simulationDomainDispatchSize);
         // state0 (Qn), state1 (Q2) + residual -> state2 (Qn+1)
-        createComputePass(computePass, integrationStage3ComputePipeline, integrationStage3BindGroup, wgDispatchSize(simulationDomain));
+        createComputePass(computePass, integrationStage3ComputePipeline, integrationStage3BindGroup, simulationDomainDispatchSize);
       }
       // update inflow velocity, will be 1 frame behind
       actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
@@ -756,15 +757,6 @@ texture-formats-tier1: ${textureTier1}
     if (max !== undefined) {
       gui.io.dt(cflFactor * 1e6 / floatView[0]);
     }
-
-    // const totalTime = (rawComputeTime + rawPostprocessingTime + rawRenderTime) / 1e6;
-    // if (maxdt > 0 && totalTime > 0) {
-    //   const timeDiff = totalTime - targetFrameTime;
-    //   avgTimePerStep = (totalTime / stepsPerFrame) * 0.1 + 0.9 * avgTimePerStep;
-    //   const targetSteps = Math.floor(targetFrameTime / avgTimePerStep);
-    //   stepsPerFrame = (stepsPerFrame + (targetSteps - stepsPerFrame) * 0.1);
-    //   console.log(targetSteps, stepsPerFrame, totalTime, timeDiff);
-    // }
   }, 100);
 
 
