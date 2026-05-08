@@ -68,6 +68,7 @@ let maxdt = 1e-4;
 let oldDt;
 let stepsPerFrame = 70;
 let autoStepsPerFrame = true;
+let cflFactor = 1.5;
 
 // will be set in main.js after pipelines are created
 let prepareState = () => {};
@@ -131,62 +132,45 @@ gui.addNumericOutput("poissonIterations", "Poisson iterations", "", 0, "grid");
 gui.addNumericOutput("gridTime", "Grid gen time", "ms", 2, "grid");
 
 gui.addGroup("sim", "Simulation");
+gui.addNumericOutput("dt", "dt", "*10^-6", 3, "sim");
 gui.addDropdown("solver", "Flux solver", ["SLAU2", "SLAU", "AUSM+-up"], "sim", {
   "SLAU2": [],
   "SLAU": [],
   "AUSM+-up": ["K_p", "K_u"],
 }, (value) => updateSolver(value));
-gui.addDropdown("simDisplayMode", "Visualization mode", ["schlieren", "density", "temperature", "pressure", "mach", "mach/m_inf", "velocity", "vorticity", "entropy"], "sim", null, (value) => {
-  displayMode = simDisplayModes[value];
-  uni.values.simDisplayMode.set([displayMode]);
-});
-gui.addNumericInput("cflFactor", true, "CFL factor", { min: 0.1, max: 3, step: 0.1, val: 1.5, float: 1 }, "sim", (value) => {
-  uni.values.cflFactor.set([value]);
-});
-gui.addNumericInput("maxdt", true, "Max dt (exp10)", { min: -6, max: 0, step: 0.1, val: Math.log10(maxdt), float: 1 }, "sim", (value) => {
-  maxdt = 10 ** value;
-  uni.values.maxdt.set([maxdt]);
-});
+gui.addDropdown("simDisplayMode", "Visualization mode",
+  ["schlieren", "density", "temperature", "pressure", "mach", "mach/m_inf", "velocity", "vorticity", "entropy"],
+  "sim", null, (value) => uni.values.simDisplayMode.set([displayMode = simDisplayModes[value]])
+);
+gui.addNumericInput("cflFactor", true, "CFL factor", { min: 0.1, max: 3, step: 0.1, val: cflFactor, float: 1 }, "sim",
+  (value) => uni.values.cflFactor.set([cflFactor = value])
+);
+gui.addNumericInput("maxdt", true, "Max dt (exp10)", { min: -6, max: 0, step: 0.1, val: Math.log10(maxdt), float: 1 }, "sim",
+  (value) => uni.values.maxdt.set([maxdt = 10 ** value])
+);
 gui.addCheckbox("autoSimSpeed", "Auto sim speed", true, "sim", (value) => {
   document.getElementById("dtPerFrame-container").style.display = value ? "none" : "";
   autoStepsPerFrame = value;
   if (!value) stepsPerFrame = gui.io.dtPerFrame.value;
 });
-gui.addNumericInput("dtPerFrame", true, "dt/frame", { min: 1, max: 100, step: 1, val: stepsPerFrame, float: 0 }, "sim", (value) => {
-  stepsPerFrame = value;
-});
+gui.addNumericInput("dtPerFrame", true, "dt/frame", { min: 1, max: 100, step: 1, val: stepsPerFrame, float: 0 }, "sim", (value) => stepsPerFrame = value);
 document.getElementById("dtPerFrame-container").style.display = "none";
 
 gui.addNumericOutput("mach", "Mach number", "", 2, "sim");
-gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 20, step: 0.01, val: inflowVel, float: 2 }, "sim", (value) => {
-  inflowVel = value;
-});
-gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 7, float: 1 }, "sim", (value) => {
-  velRampUpStrength = Math.pow(2, value);
-}, "How fast the velocity changes when ramping up or down");
+gui.addNumericInput("inflowVel", true, "Inflow velocity", { min: 0, max: 20, step: 0.01, val: inflowVel, float: 2 }, "sim", (value) => inflowVel = value);
+gui.addNumericInput("rampFactor", true, "V smoothing", { min: 0, max: 10, step: 0.1, val: 7, float: 1 }, "sim", (value) => velRampUpStrength = Math.pow(2, value),
+  "How fast the velocity changes when ramping up or down");
 gui.addNumericInput("AoA", true, "Angle of attack", { min: -180, max: 180, step: 1, val: 0, float: 0 }, "sim", (value) => {
   AoA = value;
   let AoARad = AoA * Math.PI / 180;
   xyAoA[0] = Math.cos(AoARad);
   xyAoA[1] = Math.sin(AoARad);
 });
-gui.addNumericInput("inPressure", true, "Inflow pressure", { min: 0.01, max: 2, step: 0.01, val: inPressure, float: 3 }, "sim", (value) => {
-  inPressure = value;
-  uni.values.inPressure.set([inPressure]);
-});
-gui.addNumericInput("inRho", true, "Inflow density", { min: 0.01, max: 2, step: 0.01, val: inRho, float: 3 }, "sim", (value) => {
-  inRho = value;
-  uni.values.inRho.set([inRho]);
-});
-gui.addNumericInput("K_p", true, "K_p", { min: 0, max: 1, step: 0.01, val: K_p, float: 2 }, "sim", (value) => {
-  uni.values.K_p.set([value]);
-});
-gui.addNumericInput("K_u", true, "K_u", { min: 0, max: 1, step: 0.01, val: K_u, float: 2 }, "sim", (value) => {
-  uni.values.K_u.set([value]);
-});
-gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => {
-  uni.values.muscl.set([value ? 1 : 0]);
-});
+gui.addNumericInput("inPressure", true, "Inflow pressure", { min: 0.01, max: 2, step: 0.01, val: inPressure, float: 3 }, "sim", (value) => uni.values.inPressure.set([inPressure = value]));
+gui.addNumericInput("inRho", true, "Inflow density", { min: 0.01, max: 2, step: 0.01, val: inRho, float: 3 }, "sim", (value) => uni.values.inRho.set([inRho = value]));
+gui.addNumericInput("K_p", true, "K_p", { min: 0, max: 1, step: 0.01, val: K_p, float: 2 }, "sim", (value) => uni.values.K_p.set([value]));
+gui.addNumericInput("K_u", true, "K_u", { min: 0, max: 1, step: 0.01, val: K_u, float: 2 }, "sim", (value) => uni.values.K_u.set([value]));
+gui.addCheckbox("muscl", "MUSCL reconstruction", true, "sim", (value) => uni.values.muscl.set([value ? 1 : 0]));
 
 gui.addButton("toggleSim", "Play / Pause", false, "sim", () => {
   if (oldDt) {
@@ -200,12 +184,8 @@ gui.addButton("toggleSim", "Play / Pause", false, "sim", () => {
 gui.addButton("restart", "Restart", false, "sim", () => prepareState());
 
 gui.addGroup("rendering", "Rendering");
-gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => {
-  uni.values.contourLevels.set([value]);
-});
-gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => {
-  uni.values.visMultiplier.set([value]);
-});
+gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => uni.values.contourLevels.set([value]));
+gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => uni.values.visMultiplier.set([value]));
 
 // handle resizing
 window.onresize = window.onload = () => {

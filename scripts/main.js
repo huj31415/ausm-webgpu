@@ -619,6 +619,7 @@ texture-formats-tier1: ${textureTier1}
   prepareGrid();
 
   let [rawComputeTime, rawRenderTime, rawPostprocessingTime, avgTimePerStep] = [0, 0, 0, 1];
+  const cflReader = new AsyncBufferReader(device, 4, 3);
   function render() {
     // update performance info
     const startTime = performance.now();
@@ -694,6 +695,7 @@ texture-formats-tier1: ${textureTier1}
       uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
     } // else { computeTime = 0; }
     computePass.end();
+    cflReader.recordCopy(encoder, storage.maxWaveSpeed);
 
     // encoder.copyBufferToBuffer(
     //   storage.maxWaveSpeed,          // Source buffer
@@ -737,7 +739,7 @@ texture-formats-tier1: ${textureTier1}
     // rafId = setTimeout(render, 1000);
   }
 
-  perfIntId = setInterval(() => {
+  perfIntId = setInterval(async () => {
     gui.io.fps(fps);
     gui.io.jsTime(jsTime);
     gui.io.frameTime(deltaTime);
@@ -746,6 +748,15 @@ texture-formats-tier1: ${textureTier1}
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
     gui.io.stepsPerFrame(stepsPerFrame);
+    const max = await cflReader.readLatest();
+    const buffer = new ArrayBuffer(4);
+    const intView = new Uint32Array(buffer);
+    const floatView = new Float32Array(buffer);
+    intView[0] = max;
+    if (max !== undefined) {
+      gui.io.dt(cflFactor * 1e6 / floatView[0]);
+    }
+
     // const totalTime = (rawComputeTime + rawPostprocessingTime + rawRenderTime) / 1e6;
     // if (maxdt > 0 && totalTime > 0) {
     //   const timeDiff = totalTime - targetFrameTime;
