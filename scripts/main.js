@@ -128,7 +128,7 @@ texture-formats-tier1: ${textureTier1}
   });
   storage.maxWaveSpeed = device.createBuffer({
     size: 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.UNIFORM,
     label: "maxWaveSpeed buffer"
   });
   device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
@@ -521,6 +521,7 @@ texture-formats-tier1: ${textureTier1}
     Math.ceil(texSize[0] / wg_x),
     Math.ceil(texSize[1] / wg_y)
   ];
+  const gridDispatchSize = wgDispatchSize(gridVertexCount);
   const totalDispatchSize = wgDispatchSize(totalCellCount);
   const yFluxDispatchSize = wgDispatchSize(yFluxTexSize);
   const xFluxDispatchSize = wgDispatchSize(xFluxTexSize);
@@ -548,7 +549,7 @@ texture-formats-tier1: ${textureTier1}
     const encoder = device.createCommandEncoder();
 
     const statePrepPass = encoder.beginComputePass();
-    createComputePass(statePrepPass, prepareStateComputePipeline, prepareStateBindGroup, wgDispatchSize(totalCellCount));
+    createComputePass(statePrepPass, prepareStateComputePipeline, prepareStateBindGroup, totalDispatchSize);
     statePrepPass.end();
     encoder.copyTextureToTexture(
       { texture: storage.state0 },
@@ -589,7 +590,7 @@ texture-formats-tier1: ${textureTier1}
 
     // create initial guess using linear interpolation
     const initGuessPass = encoder.beginComputePass();
-    createComputePass(initGuessPass, gridInterpolationComputePipeline, gridInterpolationBindGroup, wgDispatchSize(gridVertexCount));
+    createComputePass(initGuessPass, gridInterpolationComputePipeline, gridInterpolationBindGroup, gridDispatchSize);
     initGuessPass.end();
     encoder.copyTextureToTexture(
       { texture: storage.gridPoints1 },
@@ -599,13 +600,13 @@ texture-formats-tier1: ${textureTier1}
     // iteratively solve elliptic Poisson equation to smooth the grid
     const gridSolveAndFinalizePass = gridTimingHelper.beginComputePass(encoder);
     for (let i = 0; i < maxPoissonIterations; i++) {
-      createComputePass(gridSolveAndFinalizePass, gridEllipticPoissonComputePipeline, gridEllipticPoissonBindGroups[pingPongIndex], wgDispatchSize(gridVertexCount));
+      createComputePass(gridSolveAndFinalizePass, gridEllipticPoissonComputePipeline, gridEllipticPoissonBindGroups[pingPongIndex], gridDispatchSize);
       pingPongIndex = 1 - pingPongIndex;
     }
     poissonIterations = maxPoissonIterations;
 
     // finalize grid by computing cell areas, face lengths, and cell distances
-    createComputePass(gridSolveAndFinalizePass, gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], wgDispatchSize(simulationDomain));
+    createComputePass(gridSolveAndFinalizePass, gridFinalizeComputePipeline, gridFinalizeBindGroups[pingPongIndex], simulationDomainDispatchSize);
     gridSolveAndFinalizePass.end();
     // pingPongIndex = 1 - pingPongIndex;
 

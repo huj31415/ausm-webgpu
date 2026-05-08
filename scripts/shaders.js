@@ -184,7 +184,7 @@ fn main(
   @builtin(global_invocation_id) gid: vec3u
 ) {
   // initialize interior state to air at rest
-  let rhoE = uni.inPressure / (uni.gamma - 1.0) + 0.5 * uni.inRho * 0.0;
+  let rhoE = uni.inPressure / (uni.gamma - 1.0);
   textureStore(state, gid.xy, vec4f(uni.inRho, 0.0, 0.0, rhoE));
 }
 `;
@@ -617,7 +617,7 @@ ${uni.uniformStruct}
 @group(0) @binding(1) var residual: texture_2d<f32>;  // rgba32float
 @group(0) @binding(2) var stateIn: texture_2d<f32>; // rgba32float
 @group(0) @binding(3) var stateOut: texture_storage_2d<rgba32float, write>; // rgba32float
-@group(0) @binding(4) var<storage, read> maxWaveSpeed: u32;
+@group(0) @binding(4) var<uniform> maxWaveSpeed: u32;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -647,7 +647,7 @@ ${uni.uniformStruct}
 @group(0) @binding(2) var stateIn: texture_2d<f32>; // rgba32float
 @group(0) @binding(3) var stateIn1: texture_2d<f32>; // rgba32float
 @group(0) @binding(4) var stateOut: texture_storage_2d<rgba32float, write>; // rgba32float
-@group(0) @binding(5) var<storage, read> maxWaveSpeed: u32;
+@group(0) @binding(5) var<uniform> maxWaveSpeed: u32;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -678,7 +678,7 @@ ${uni.uniformStruct}
 @group(0) @binding(2) var stateIn: texture_2d<f32>; // rgba32float
 @group(0) @binding(3) var stateIn2: texture_2d<f32>; // rgba32float
 @group(0) @binding(4) var stateOut: texture_storage_2d<rgba32float, write>; // rgba32float
-@group(0) @binding(5) var<storage, read> maxWaveSpeed: u32;
+@group(0) @binding(5) var<uniform> maxWaveSpeed: u32;
 
 override WG_X: u32;
 override WG_Y: u32;
