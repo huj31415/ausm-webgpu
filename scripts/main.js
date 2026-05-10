@@ -97,6 +97,8 @@ texture-formats-tier1: ${textureTier1}
     format: swapChainFormat,
   });
 
+  const colorbarCtx = colorbar.getContext("2d");
+
   const new2dTexture = (name, size = simulationDomain, format = `r${floatPrecision}float`, copy = false, storage = true) => device.createTexture({
     size: size,
     dimension: "2d",
@@ -132,6 +134,18 @@ texture-formats-tier1: ${textureTier1}
     label: "maxWaveSpeed buffer"
   });
   device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
+
+  storage.graphData = device.createBuffer({
+    size: graphPoints * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    label: "graphData buffer"
+  });
+  // test data for graph
+  let graphData = new Float32Array(graphPoints);
+  for (let i = 0; i < graphPoints; i++) {
+    graphData[i] = Math.random();
+  }
+  device.queue.writeBuffer(storage.graphData, 0, graphData);
 
   // const stagingBuffer = device.createBuffer({
   //   size: 4,
@@ -470,22 +484,24 @@ texture-formats-tier1: ${textureTier1}
         }
       },
     ],
+    label: "render bind group layout"
   });
   const renderPipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [ renderBindGroupLayout ],
   });
   
-  const newRenderPipeline = (topology) => device.createRenderPipeline({
-    label: `${topology} rendering pipeline`,
-    layout: renderPipelineLayout,
-    vertex: { module: renderModule },
-    fragment: {
-      module: renderModule,
-      targets: [{ format: swapChainFormat }],
-      constants: {}
-    },
-    primitive: { topology: topology },
-  });
+  const newRenderPipeline = (topology, name = "main", module = renderModule, layout = renderPipelineLayout) =>
+    device.createRenderPipeline({
+      label: `${topology} ${name} rendering pipeline`,
+      layout: layout,
+      vertex: { module: module },
+      fragment: {
+        module: module,
+        targets: [{ format: swapChainFormat }],
+        constants: {}
+      },
+      primitive: { topology: topology },
+    });
   const renderPipelines = [
     newRenderPipeline("triangle-strip"),
     newRenderPipeline("line-strip"),
@@ -510,6 +526,35 @@ texture-formats-tier1: ${textureTier1}
       storeOp: 'store',
     }]
   };
+
+
+  // disable graph update when hidden
+  lineGraphCtx.configure({
+    device: device,
+    format: swapChainFormat,
+  });
+  const lineGraphRenderModule = device.createShaderModule({
+    code: lineGraphRenderShaderCode,
+    label: "line graph render module"
+  });
+  const lineGraphRenderPipeline = newRenderPipeline("triangle-strip", "line graph", lineGraphRenderModule, "auto");
+  const lineGraphRenderBindGroup = device.createBindGroup({
+    layout: lineGraphRenderPipeline.getBindGroupLayout(0),
+    entries: [
+      // { binding: 0, resource: { buffer: uniformBuffer } },
+      { binding: 1, resource: { buffer: storage.graphData } },
+    ],
+    label: "line graph render bind group"
+  });
+  const lineGraphRenderPassDescriptor = {
+    label: 'line graph render pass',
+    colorAttachments: [{
+      clearValue: [0, 0, 0, 1],
+      loadOp: 'load', // clear
+      storeOp: 'store',
+    }]
+  };
+
   const filterStrength = 20;
 
   const computeTimingHelper = new TimingHelper(device);
@@ -620,7 +665,7 @@ texture-formats-tier1: ${textureTier1}
   prepareGrid();
 
   let [rawComputeTime, rawRenderTime, rawPostprocessingTime, avgTimePerStep] = [0, 0, 0, 1];
-  const cflReader = new AsyncBufferReader(device, 4, 3);
+  const cflReader = new AsyncBufferReader(device, 4, 5);
 
   function render() {
     // update performance info
@@ -716,6 +761,14 @@ texture-formats-tier1: ${textureTier1}
     renderPass.setBindGroup(0, renderBindGroup);
     renderPass.draw(numVertices);
     renderPass.end();
+
+    lineGraphRenderPassDescriptor.colorAttachments[0].view = lineGraphCtx.getCurrentTexture().createView();
+    const lineGraphPass = encoder.beginRenderPass(lineGraphRenderPassDescriptor);
+    lineGraphPass.setPipeline(lineGraphRenderPipeline);
+    lineGraphPass.setBindGroup(0, lineGraphRenderBindGroup);
+    // add more pipelines and bind groups to render more lines, or use render bundle
+    lineGraphPass.draw(graphPoints * 2);
+    lineGraphPass.end();
 
     device.queue.submit([encoder.finish()]);
 

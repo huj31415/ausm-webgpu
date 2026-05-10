@@ -28,6 +28,11 @@ uni.addUniform("visMultiplier", "f32");
 
 uni.finalize();
 
+const graphUni = new Uniforms();
+graphUni.addUniform("nPoints", "f32");
+graphUni.addUniform("maxF", "f32");
+graphUni.finalize();
+
 
 
 const Int16Max = 32767;
@@ -84,6 +89,8 @@ let inRho = 1.0;
 let K_p = 0;//.25;
 let K_u = 0.75;
 
+let graphPoints = 256;
+
 const simDisplayModes = Object.freeze({
   schlieren: 0,
   vorticity: 1,
@@ -110,6 +117,7 @@ let displayMode = simDisplayModes.schlieren;
 uni.values.simDisplayMode.set([displayMode]);
 
 const canvas = document.getElementById("canvas");
+const colorbar = document.getElementById("colorbar");
 let pixelRatio = window.devicePixelRatio || 1;
 
 const gui = new GUI("AUSM-family compressible inviscid fluid sim", canvas);
@@ -186,6 +194,13 @@ gui.addButton("restart", "Restart", false, "sim", () => prepareState());
 gui.addGroup("rendering", "Rendering");
 gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => uni.values.contourLevels.set([value]));
 gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => uni.values.visMultiplier.set([value]));
+
+gui.addGroup("graphs", "Graphs");
+const lineGraphCtx = gui.addCanvas("graphCanvas", "Aero properties", {
+  "F<sub>total</sub>": "white",
+  "C<sub>l</sub>": "green",
+  "C<sub>d</sub>": "red",
+}, 2, "webgpu", "graphs");
 
 // handle resizing
 window.onresize = window.onload = () => {

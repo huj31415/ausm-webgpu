@@ -291,7 +291,8 @@ function updateGridBoundaries(objCoords = objectCoords["polygon"], boundCoords =
     gridBoundaryData[rightBoundary] = 0;
     gridBoundaryData[rightBoundary + 1] = y;
   }
-  // need solution for corners - negative for solid boundary?
+  // need solution for corners
+  // sign represents boundary type, abs value represents connection coordinates
 }
 updateGridBoundaries();
 
