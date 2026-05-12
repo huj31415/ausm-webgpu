@@ -135,15 +135,20 @@ texture-formats-tier1: ${textureTier1}
   });
   device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
 
-  storage.forceRingBuffer = device.createBuffer({
-    size: graphPoints * 4 * 2, // vec2f per graph point
-    usage: GPUBufferUsage.STORAGE,// | GPUBufferUsage.COPY_DST,
-    label: "forceRingBuffer buffer"
-  });
   storage.forceValues = device.createBuffer({
     size: simulationDomain[0] * 4 * 2, // vec2f per boundary segment
     usage: GPUBufferUsage.STORAGE,
     label: "forceValues buffer"
+  });
+  storage.ringBuffer = device.createBuffer({
+    size: graphPoints * 4 * 4, // vec4f
+    usage: GPUBufferUsage.STORAGE,
+    label: "forceRingBuffer buffer"
+  });
+  storage.forceVector = device.createBuffer({
+    size: 8, // single vec2f
+    usage: GPUBufferUsage.STORAGE,
+    label: "forceVector buffer"
   });
   // // test data for graph
   // let forceValues = new Float32Array(graphPoints * 2);
@@ -497,7 +502,7 @@ texture-formats-tier1: ${textureTier1}
     bindGroupLayouts: [ renderBindGroupLayout ],
   });
   
-  const newRenderPipeline = (topology, name = "main", module = renderModule, layout = renderPipelineLayout) =>
+  const newRenderPipeline = (topology, name = "main", module = renderModule, layout = renderPipelineLayout, consts = {}) =>
     device.createRenderPipeline({
       label: `${topology} ${name} rendering pipeline`,
       layout: layout,
@@ -505,7 +510,7 @@ texture-formats-tier1: ${textureTier1}
       fragment: {
         module: module,
         targets: [{ format: swapChainFormat }],
-        constants: {}
+        constants: consts
       },
       primitive: { topology: topology },
     });
@@ -553,13 +558,14 @@ texture-formats-tier1: ${textureTier1}
       { binding: 0, resource: { buffer: uniformBuffer } },
       { binding: 1, resource: { buffer: graphUniformBuffer } },
       { binding: 2, resource: { buffer: storage.forceValues } },
-      { binding: 3, resource: { buffer: storage.forceRingBuffer } },
+      { binding: 3, resource: { buffer: storage.ringBuffer } },
+      { binding: 4, resource: { buffer: storage.forceVector } },
     ],
     label: "Force integration compute bind group"
   });
 
 
-  // disable graph update when hidden
+  // todo: disable graph update when hidden
   lineGraphCtx.configure({
     device: device,
     format: swapChainFormat,
@@ -573,14 +579,14 @@ texture-formats-tier1: ${textureTier1}
     layout: lineGraphRenderPipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: { buffer: graphUniformBuffer } },
-      { binding: 1, resource: { buffer: storage.forceRingBuffer } },
+      { binding: 1, resource: { buffer: storage.ringBuffer } },
     ],
     label: "line graph render bind group"
   });
   const lineGraphRenderPassDescriptor = {
     label: 'line graph render pass',
     colorAttachments: [{
-      clearValue: [0, 0, 0, 1],
+      clearValue: [0, 0, 0, 0],
       loadOp: 'load', // clear
       storeOp: 'store',
     }]
@@ -592,6 +598,8 @@ texture-formats-tier1: ${textureTier1}
   const renderTimingHelper = new TimingHelper(device);
   const postprocessingTimingHelper = new TimingHelper(device);
   const gridTimingHelper = new TimingHelper(device);
+  const forceCalcTimingHelper = new TimingHelper(device);
+  const graphTimingHelper = new TimingHelper(device);
 
   const wgDispatchSize = (texSize) => [
     Math.ceil(texSize[0] / wg_x),
@@ -695,7 +703,7 @@ texture-formats-tier1: ${textureTier1}
 
   prepareGrid();
 
-  let [rawComputeTime, rawRenderTime, rawPostprocessingTime, avgTimePerStep] = [0, 0, 0, 1];
+  let [rawComputeTime, rawRenderTime, rawPostprocessingTime, rawForceTime, rawGraphTime, avgTimePerStep] = [0, 0, 0, 0, 0, 1];
   const cflReader = new AsyncBufferReader(device, 4, 5);
 
   function render() {
@@ -706,7 +714,7 @@ texture-formats-tier1: ${textureTier1}
 
     const run = maxdt > 0;
     // adaptive time stepping: adjust stepsPerFrame based on how long the last frame took compared to the target frame time
-    const totalTime = (rawComputeTime + rawRenderTime + rawPostprocessingTime) / 1e6;
+    const totalTime = (rawComputeTime + rawRenderTime + rawPostprocessingTime + rawForceTime + rawGraphTime) / 1e6;
     if (autoStepsPerFrame && totalTime > 0 && run) {
       const timeDifference = (startTime - lastFrameTime) - targetFrameTime;
       // const timeDifference = totalTime - targetFrameTime;
@@ -725,7 +733,6 @@ texture-formats-tier1: ${textureTier1}
 
     uni.update(device.queue);
 
-    graphUni.values.writeHead.set([(graphUni.values.writeHead[0] + 1) % graphPoints]);
     graphUni.update(device.queue);
 
     const encoder = device.createCommandEncoder();
@@ -778,13 +785,6 @@ texture-formats-tier1: ${textureTier1}
     computePass.end();
     cflReader.recordCopy(encoder, storage.maxWaveSpeed);
 
-    // encoder.copyBufferToBuffer(
-    //   storage.maxWaveSpeed,          // Source buffer
-    //   0,                  // Source offset
-    //   stagingBuffer,      // Destination buffer
-    //   0,                  // Destination offset
-    //   4          // Size to copy
-    // );
     const postPass = postprocessingTimingHelper.beginComputePass(encoder);
     createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
     createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
@@ -796,34 +796,35 @@ texture-formats-tier1: ${textureTier1}
     renderPass.draw(numVertices);
     renderPass.end();
 
-    const forceGraphPass = encoder.beginComputePass();
-    createComputePass(forceGraphPass, forceCalcComputePipeline, forceCalcBindGroup, [Math.ceil(simulationDomain[0] / 16)]);
-    createComputePass(forceGraphPass, forceIntegrationComputePipeline, forceIntegrationBindGroup, [1]);
-    forceGraphPass.end();
+    // graphing
+    if (run) {
+      const forceGraphPass = forceCalcTimingHelper.beginComputePass(encoder);
+      createComputePass(forceGraphPass, forceCalcComputePipeline, forceCalcBindGroup, [Math.ceil(simulationDomain[0] / 16)]);
+      createComputePass(forceGraphPass, forceIntegrationComputePipeline, forceIntegrationBindGroup, [1]);
+      forceGraphPass.end();
 
-    lineGraphRenderPassDescriptor.colorAttachments[0].view = lineGraphCtx.getCurrentTexture().createView();
-    const lineGraphPass = encoder.beginRenderPass(lineGraphRenderPassDescriptor);
-    lineGraphPass.setPipeline(lineGraphRenderPipeline);
-    lineGraphPass.setBindGroup(0, lineGraphRenderBindGroup);
-    // add more pipelines and bind groups to render more lines, or use render bundle
-    lineGraphPass.draw(graphPoints * 2);
-    lineGraphPass.end();
+      lineGraphRenderPassDescriptor.colorAttachments[0].view = lineGraphCtx.getCurrentTexture().createView();
+      const lineGraphPass = graphTimingHelper.beginRenderPass(encoder, lineGraphRenderPassDescriptor);
+      lineGraphPass.setPipeline(lineGraphRenderPipeline);
+      lineGraphPass.setBindGroup(0, lineGraphRenderBindGroup);
+      lineGraphPass.draw(graphPoints * 2, 4); // graphPoints vertices per line, 4 lines (force, Cl, Cd, Cl/Cd)
+      lineGraphPass.end();
+      // shift graph data in ring buffer
+      graphUni.values.writeHead.set([(graphUni.values.writeHead[0] + 1) % graphPoints]);
+    }
 
     device.queue.submit([encoder.finish()]);
-
-    // await stagingBuffer.mapAsync(GPUMapMode.READ);
-    // const copyArrayBuffer = stagingBuffer.getMappedRange();
-    // const data = copyArrayBuffer.slice(0, 4);
-    // stagingBuffer.unmap();
-    // const resultValues = new Float32Array(data);
-    // console.log(resultValues);
 
     computeTimingHelper.getResult().then(gpuTime => rawComputeTime = gpuTime);
     postprocessingTimingHelper.getResult().then(gpuTime => rawPostprocessingTime = gpuTime);
     renderTimingHelper.getResult().then(gpuTime => rawRenderTime = gpuTime);
+    forceCalcTimingHelper.getResult().then(gpuTime => rawForceTime = gpuTime);
+    graphTimingHelper.getResult().then(gpuTime => rawGraphTime = gpuTime);
     computeTime += (rawComputeTime - computeTime) / filterStrength;
     postprocessingTime += (rawPostprocessingTime - postprocessingTime) / filterStrength;
     renderTime += (rawRenderTime - renderTime) / filterStrength;
+    forceTime += (rawForceTime - forceTime) / filterStrength;
+    graphTime += (rawGraphTime - graphTime) / filterStrength;
 
     gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
@@ -842,6 +843,8 @@ texture-formats-tier1: ${textureTier1}
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
     gui.io.stepsPerFrame(stepsPerFrame);
+    gui.io.forceTime(forceTime / 1e6);
+    gui.io.graphTime(graphTime / 1e6);
     const max = await cflReader.readLatest();
     const buffer = new ArrayBuffer(4);
     const intView = new Uint32Array(buffer);

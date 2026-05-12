@@ -68,7 +68,7 @@ const storage = {
   vis: null, // (M)x(N)
 }
 
-let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = gridTime = targetFrameTime = computeTime = 0;
+let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = gridTime = targetFrameTime = computeTime = forceTime = graphTime = 0;
 let poissonTime = 0;
 let maxdt = 1e-4;
 let oldDt;
@@ -124,17 +124,31 @@ let pixelRatio = window.devicePixelRatio || 1;
 
 const gui = new GUI("AUSM-family compressible inviscid fluid sim", canvas);
 
-gui.addGroup("perf", "Performance");
-gui.addStringOutput("res", "Resolution", "", "perf");
-gui.addHalfWidthGroups("perfL", "perfR", "perf");
+gui.addMultiColGroup("perf", "Performance", "", 2);
+gui.addStringOutput("res", "Res", "", "perf");
+// gui.addHalfWidthGroups("perfL", "perfR", "perf");
 
-gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
-gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
-gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
-gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perfL");
-gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfR");
-gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfR");
-gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfR");
+// gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
+// gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
+// gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
+// gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perfL");
+
+// gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfR");
+// gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfR");
+// gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfR");
+// gui.addNumericOutput("forceTime", "Force calc", "ms", 2, "perfR");
+// gui.addNumericOutput("graphTime", "Draw graph", "ms", 2, "perfR");
+
+gui.addNumericOutput("fps", "FPS", "", 1, "perf");
+gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perf");
+gui.addNumericOutput("jsTime", "JS", "ms", 2, "perf");
+gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perf");
+
+gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perf");
+gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perf");
+gui.addNumericOutput("renderTime", "Render", "ms", 2, "perf");
+gui.addNumericOutput("forceTime", "Force calc", "ms", 2, "perf");
+gui.addNumericOutput("graphTime", "Draw graph", "ms", 2, "perf");
 
 gui.addGroup("grid", "Grid");
 gui.addNDimensionalOutput(["gridResX", "gridResY"], "Grid res", "", ", ", 0, "grid");
@@ -202,7 +216,8 @@ const lineGraphCtx = gui.addCanvas("graphCanvas", "Aero force, C<sub><i>l</i></s
   "F<sub><i>total</i></sub>": "white",
   "C<sub><i>l</i></sub>": "green",
   "C<sub><i>d</i></sub>": "red",
-}, 2, "webgpu", "graphs");
+  "C<sub><i>l</i></sub>/C<sub><i>d</i></sub>": "blue"
+}, 2, 2, "webgpu", "graphs");
 
 // handle resizing
 window.onresize = window.onload = () => {

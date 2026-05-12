@@ -50,7 +50,8 @@ ${graphUni.uniformStruct}
 @group(0) @binding(0) var<uniform> uni: Uniforms;
 @group(0) @binding(1) var<uniform> graphUni: GraphUniforms;
 @group(0) @binding(2) var<storage, read> forceValues: array<vec2f>;
-@group(0) @binding(3) var<storage, read_write> forceRing: array<vec2f>;
+@group(0) @binding(3) var<storage, read_write> ring: array<vec4f>;
+@group(0) @binding(4) var<storage, read_write> currentForce: vec2f;
 
 override WG_X: u32;
 override WG_Y: u32;
@@ -84,7 +85,19 @@ fn main(
     workgroupBarrier();
   }
   if (lidx == 0u) {
-    forceRing[writeIdx] = wgShared[0];
+    // Cl and Cd should have the same scale factor when graphing
+    let totalForce = wgShared[0];
+    currentForce = totalForce;
+    let vNorm = normalize(uni.inflowV);
+    let invQ = 1 / (0.5 * uni.inRho * dot(uni.inflowV, uni.inflowV));
+    let Cl = dot(totalForce, vec2f(-vNorm.y, vNorm.x)) * invQ;
+    let Cd = dot(totalForce, vNorm) * invQ;
+    ring[writeIdx] = vec4f(
+      length(totalForce) * sign(dot(totalForce, vNorm)),
+      Cl,
+      Cd,
+      Cl / Cd
+    );
   }
 }
 `;
@@ -93,34 +106,46 @@ const lineGraphRenderShaderCode = /* wgsl */`
 ${graphUni.uniformStruct}
 
 @group(0) @binding(0) var<uniform> graphUni: GraphUniforms;
-@group(0) @binding(1) var<storage, read> data: array<vec2f>;
+@group(0) @binding(1) var<storage, read> data: array<vec4f>;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) fragCoord: vec2f,
+  @location(1) @interpolate(flat) iIdx: u32,
 };
 
+const lineColors = array<vec4f, 4>(
+  vec4f(1.0), // forceMag - white
+  vec4f(0.2, 0.9, 0.4, 1.0), // Cl - green
+  vec4f(0.9, 0.3, 0.2, 1.0), // Cd - red
+  vec4f(0.3, 0.6, 1.0, 1.0), // Cl/Cd - blue
+);
+
 @vertex
-fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
+fn vs(
+  @builtin(vertex_index) vIdx: u32,
+  @builtin(instance_index) iIdx: u32
+) -> VertexOut {
   // use data to draw triangle strip from bottom of the graph to data point height
   // store the relative data point height for coloring
   // vertex order for area graph: (0,0) -> (0, data[0]) -> (1,0) -> (1, data[1]) -> ...
   // for thick line graph: (0, data[0] - thickness) -> (0, data[0]) -> (1, data[1] - thickness) -> ...
   // need to correct for normal to avoid line thickness decreasing at high slopes
+
   let idx = vIdx / 2u;
-  let dataValue = length(data[(idx + u32(graphUni.writeHead)) % u32(graphUni.nPoints)]);
-  // let dataValue = (data[(idx + u32(graphUni.writeHead)) % u32(graphUni.nPoints)]).x;
-  let thickness = 0.01;
+  let dataValue = data[(idx + u32(graphUni.writeHead)) % u32(graphUni.nPoints)][iIdx];
+  let thickness = 0.02;
   let isOdd = (vIdx & 1u) == 1;
-  let pos = vec2f(f32(idx) / 255.0, select(dataValue, dataValue + thickness, isOdd));
-  var out: VertexOut;
-  out.position = vec4f(pos * 2.0 - 1.0, 0.0, 1.0);
-  out.fragCoord = pos;
-  return out;
+  let pos = vec2f(f32(idx) / 255.0 * 2.0 - 1.0, select(dataValue, dataValue + thickness, isOdd));
+  return VertexOut(
+    vec4f(pos, 0.0, 1.0),
+    pos,
+    iIdx
+  );
 }
 
 @fragment
 fn fs(vtx: VertexOut) -> @location(0) vec4f {
-  return (vtx.fragCoord.y + 1.0) * 0.5 * vec4f(1.0);
+  return lineColors[vtx.iIdx];// * (vtx.fragCoord.y + 1.0) * 0.5;
 }
 `;

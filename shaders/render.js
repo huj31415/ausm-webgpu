@@ -49,7 +49,6 @@ fn vIdxToLineStrip(vIdx: u32) -> vec2u {
 
 @vertex
 fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
-  var out: VertexOut;
   var gridPos: vec2u;
   switch (u32(uni.gridDisplayMode)) {
     case 0: { gridPos = vIdxToTriangleStrip(vIdx); }
@@ -60,8 +59,6 @@ fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
   let vtxIdx = vec2u(gridPos.x % (u32(uni.simDomain.x)), gridPos.y);
   let vtx = textureLoad(gridPoints, vtxIdx, 0).xy;
   let vtxPos = (vtx * uni.zoom + uni.pan) / uni.resRatio;
-  out.position = vec4f(vtxPos, 0.0, 1.0);
-  out.fragCoord = vec2f(gridPos) / vec2f(uni.simDomain);
   
   // adjust for ghost cells in visualization
   // let gridPos_f = vec2f(gridPos);
@@ -74,7 +71,10 @@ fn vs(@builtin(vertex_index) vIdx: u32) -> VertexOut {
   // let tangent = normalize(textureLoad(gridPoints, adjIdx, 0).xy - vtx);
   // out.normal = vec2f(-tangent.y, tangent.x);
 
-  return out;
+  return VertexOut(
+    vec4f(vtxPos, 0.0, 1.0),
+    vec2f(gridPos) / vec2f(uni.simDomain)
+  );
 }
 
 @fragment
