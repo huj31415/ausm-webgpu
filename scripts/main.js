@@ -727,10 +727,6 @@ texture-formats-tier1: ${textureTier1}
     
     lastFrameTime = startTime;
 
-
-    const canvasTexture = context.getCurrentTexture();
-    renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
-
     uni.update(device.queue);
 
     graphUni.update(device.queue);
@@ -790,13 +786,14 @@ texture-formats-tier1: ${textureTier1}
     createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
     postPass.end();
 
+    renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
     const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
     renderPass.setPipeline(renderPipelines[gridDisplayMode]);
     renderPass.setBindGroup(0, renderBindGroup);
     renderPass.draw(numVertices);
     renderPass.end();
 
-    // graphing
+    // graphing, todo: only update when graph is visible, adjust update rate to dt/frame
     if (run) {
       const forceGraphPass = forceCalcTimingHelper.beginComputePass(encoder);
       createComputePass(forceGraphPass, forceCalcComputePipeline, forceCalcBindGroup, [Math.ceil(simulationDomain[0] / 16)]);
@@ -839,12 +836,12 @@ texture-formats-tier1: ${textureTier1}
     gui.io.jsTime(jsTime);
     gui.io.frameTime(deltaTime);
     gui.io.computeTime(computeTime / 1e6);
-    gui.io.postTime(postprocessingTime / 1e6);
+    gui.io.postTime(postprocessingTime / 1e3);
     gui.io.renderTime(renderTime / 1e6);
     gui.io.poissonIterations(poissonIterations);
     gui.io.stepsPerFrame(stepsPerFrame);
-    gui.io.forceTime(forceTime / 1e6);
-    gui.io.graphTime(graphTime / 1e6);
+    gui.io.forceTime(forceTime / 1e3);
+    gui.io.graphTime(graphTime / 1e3);
     const max = await cflReader.readLatest();
     const buffer = new ArrayBuffer(4);
     const intView = new Uint32Array(buffer);

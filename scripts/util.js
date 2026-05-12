@@ -126,18 +126,6 @@ const gui = new GUI("AUSM-family compressible inviscid fluid sim", canvas);
 
 gui.addMultiColGroup("perf", "Performance", "", 2);
 gui.addStringOutput("res", "Res", "", "perf");
-// gui.addHalfWidthGroups("perfL", "perfR", "perf");
-
-// gui.addNumericOutput("fps", "FPS", "", 1, "perfL");
-// gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perfL");
-// gui.addNumericOutput("jsTime", "JS", "ms", 2, "perfL");
-// gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perfL");
-
-// gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perfR");
-// gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perfR");
-// gui.addNumericOutput("renderTime", "Render", "ms", 2, "perfR");
-// gui.addNumericOutput("forceTime", "Force calc", "ms", 2, "perfR");
-// gui.addNumericOutput("graphTime", "Draw graph", "ms", 2, "perfR");
 
 gui.addNumericOutput("fps", "FPS", "", 1, "perf");
 gui.addNumericOutput("frameTime", "Frame", "ms", 2, "perf");
@@ -145,10 +133,10 @@ gui.addNumericOutput("jsTime", "JS", "ms", 2, "perf");
 gui.addNumericOutput("stepsPerFrame", "dt/frame", "", 0, "perf");
 
 gui.addNumericOutput("computeTime", "Compute", "ms", 2, "perf");
-gui.addNumericOutput("postTime", "Postprocess", "ms", 2, "perf");
+gui.addNumericOutput("postTime", "Post", "us", 2, "perf");
 gui.addNumericOutput("renderTime", "Render", "ms", 2, "perf");
-gui.addNumericOutput("forceTime", "Force calc", "ms", 2, "perf");
-gui.addNumericOutput("graphTime", "Draw graph", "ms", 2, "perf");
+gui.addNumericOutput("forceTime", "Force calc", "us", 2, "perf");
+gui.addNumericOutput("graphTime", "Draw graph", "us", 2, "perf");
 
 gui.addGroup("grid", "Grid");
 gui.addNDimensionalOutput(["gridResX", "gridResY"], "Grid res", "", ", ", 0, "grid");
