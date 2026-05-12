@@ -28,9 +28,10 @@ uni.addUniform("visMultiplier", "f32");
 
 uni.finalize();
 
-const graphUni = new Uniforms();
+const graphUni = new Uniforms("GraphUniforms");
 graphUni.addUniform("nPoints", "f32");
 graphUni.addUniform("maxF", "f32");
+graphUni.addUniform("writeHead", "f32");
 graphUni.finalize();
 
 
@@ -90,6 +91,7 @@ let K_p = 0;//.25;
 let K_u = 0.75;
 
 let graphPoints = 256;
+graphUni.values.nPoints.set([graphPoints]);
 
 const simDisplayModes = Object.freeze({
   schlieren: 0,
@@ -196,10 +198,10 @@ gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, 
 gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => uni.values.visMultiplier.set([value]));
 
 gui.addGroup("graphs", "Graphs");
-const lineGraphCtx = gui.addCanvas("graphCanvas", "Aero properties", {
-  "F<sub>total</sub>": "white",
-  "C<sub>l</sub>": "green",
-  "C<sub>d</sub>": "red",
+const lineGraphCtx = gui.addCanvas("graphCanvas", "Aero force, C<sub><i>l</i></sub>, C<sub><i>d</i></sub>", {
+  "F<sub><i>total</i></sub>": "white",
+  "C<sub><i>l</i></sub>": "green",
+  "C<sub><i>d</i></sub>": "red",
 }, 2, "webgpu", "graphs");
 
 // handle resizing

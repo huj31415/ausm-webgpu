@@ -135,17 +135,23 @@ texture-formats-tier1: ${textureTier1}
   });
   device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
 
-  storage.graphData = device.createBuffer({
-    size: graphPoints * 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    label: "graphData buffer"
+  storage.forceRingBuffer = device.createBuffer({
+    size: graphPoints * 4 * 2, // vec2f per graph point
+    usage: GPUBufferUsage.STORAGE,// | GPUBufferUsage.COPY_DST,
+    label: "forceRingBuffer buffer"
   });
-  // test data for graph
-  let graphData = new Float32Array(graphPoints);
-  for (let i = 0; i < graphPoints; i++) {
-    graphData[i] = Math.random();
-  }
-  device.queue.writeBuffer(storage.graphData, 0, graphData);
+  storage.forceValues = device.createBuffer({
+    size: simulationDomain[0] * 4 * 2, // vec2f per boundary segment
+    usage: GPUBufferUsage.STORAGE,
+    label: "forceValues buffer"
+  });
+  // // test data for graph
+  // let forceValues = new Float32Array(graphPoints * 2);
+  // for (let i = 0; i < graphPoints; i++) {
+  //   forceValues[i * 2] = Math.random();
+  //   forceValues[i * 2 + 1] = Math.random();
+  // }
+  // device.queue.writeBuffer(storage.forceRingBuffer, 0, forceValues);
 
   // const stagingBuffer = device.createBuffer({
   //   size: 4,
@@ -157,6 +163,7 @@ texture-formats-tier1: ${textureTier1}
   );
 
   const uniformBuffer = uni.createBuffer(device);
+  const graphUniformBuffer = graphUni.createBuffer(device);
 
   const newComputePipeline = (shaderCode, name, layout = "auto") =>
     device.createComputePipeline({
@@ -527,6 +534,30 @@ texture-formats-tier1: ${textureTier1}
     }]
   };
 
+  // force calculation and graphing
+  const forceCalcComputePipeline = newComputePipeline(forceCalcShaderCode, "Force calculation");
+  const forceCalcBindGroup = device.createBindGroup({
+    layout: forceCalcComputePipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuffer } },
+      { binding: 1, resource: textureViews.state2 }, // latest state after integration
+      { binding: 2, resource: textureViews.gridPoints0 },
+      { binding: 3, resource: { buffer: storage.forceValues } },
+    ],
+    label: "Force calculation compute bind group"
+  });
+  const forceIntegrationComputePipeline = newComputePipeline(forceIntegrationShaderCode, "Force integration");
+  const forceIntegrationBindGroup = device.createBindGroup({
+    layout: forceIntegrationComputePipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuffer } },
+      { binding: 1, resource: { buffer: graphUniformBuffer } },
+      { binding: 2, resource: { buffer: storage.forceValues } },
+      { binding: 3, resource: { buffer: storage.forceRingBuffer } },
+    ],
+    label: "Force integration compute bind group"
+  });
+
 
   // disable graph update when hidden
   lineGraphCtx.configure({
@@ -541,8 +572,8 @@ texture-formats-tier1: ${textureTier1}
   const lineGraphRenderBindGroup = device.createBindGroup({
     layout: lineGraphRenderPipeline.getBindGroupLayout(0),
     entries: [
-      // { binding: 0, resource: { buffer: uniformBuffer } },
-      { binding: 1, resource: { buffer: storage.graphData } },
+      { binding: 0, resource: { buffer: graphUniformBuffer } },
+      { binding: 1, resource: { buffer: storage.forceRingBuffer } },
     ],
     label: "line graph render bind group"
   });
@@ -660,7 +691,7 @@ texture-formats-tier1: ${textureTier1}
       gridTimingHelper.getResult().then(gpuTime => gui.io.gridTime(gpuTime / 1e6));
     }, 100);
     prepareState();
-  }
+  };
 
   prepareGrid();
 
@@ -693,6 +724,9 @@ texture-formats-tier1: ${textureTier1}
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
     uni.update(device.queue);
+
+    graphUni.values.writeHead.set([(graphUni.values.writeHead[0] + 1) % graphPoints]);
+    graphUni.update(device.queue);
 
     const encoder = device.createCommandEncoder();
 
@@ -761,6 +795,11 @@ texture-formats-tier1: ${textureTier1}
     renderPass.setBindGroup(0, renderBindGroup);
     renderPass.draw(numVertices);
     renderPass.end();
+
+    const forceGraphPass = encoder.beginComputePass();
+    createComputePass(forceGraphPass, forceCalcComputePipeline, forceCalcBindGroup, [Math.ceil(simulationDomain[0] / 16)]);
+    createComputePass(forceGraphPass, forceIntegrationComputePipeline, forceIntegrationBindGroup, [1]);
+    forceGraphPass.end();
 
     lineGraphRenderPassDescriptor.colorAttachments[0].view = lineGraphCtx.getCurrentTexture().createView();
     const lineGraphPass = encoder.beginRenderPass(lineGraphRenderPassDescriptor);

@@ -266,13 +266,13 @@ const boundaryCoords = new Array(gridVertexCount[0]).fill(0).map((_, t) => gener
 
 function updateGridBoundaries(objCoords = objectCoords["polygon"], boundCoords = boundaryCoords) {
   for (let x = 0; x < gridVertexCount[0]; x++) {
-    const i = vtxIdx(x, 0);
-    gridVtxData[i] = objCoords[x][0];
-    gridVtxData[i + 1] = objCoords[x][1];
+    const objectIdx = vtxIdx(x, 0);
+    gridVtxData[objectIdx] = objCoords[x][0];
+    gridVtxData[objectIdx + 1] = objCoords[x][1];
 
-    const objI = vtxIdx(x, gridVertexCount[1] - 1);
-    gridVtxData[objI] = boundCoords[x][0];
-    gridVtxData[objI + 1] = boundCoords[x][1];
+    const boundaryIdx = vtxIdx(x, gridVertexCount[1] - 1);
+    gridVtxData[boundaryIdx] = boundCoords[x][0];
+    gridVtxData[boundaryIdx + 1] = boundCoords[x][1];
 
     // if (x < simulationDomain[0]) {
     //   const i = cellIdx(x, 0);
