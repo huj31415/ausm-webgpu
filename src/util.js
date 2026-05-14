@@ -66,6 +66,11 @@ const storage = {
 
   // visualization
   vis: null, // (M)x(N)
+
+  // force calculation and graphing
+  forceValues: null,
+  forceVector: null,
+  ringBuffer: null,
 }
 
 let deltaTime = lastFrameTime = fps = jsTime = renderTime = postprocessingTime = gridTime = targetFrameTime = computeTime = forceTime = graphTime = 0;
@@ -197,7 +202,7 @@ gui.addButton("restart", "Restart", false, "sim", () => prepareState());
 
 gui.addGroup("rendering", "Rendering");
 gui.addNumericInput("contourLevels", true, "Contour levels", { min: 0, max: 10, step: 1, val: 0, float: 0 }, "rendering", (value) => uni.values.contourLevels.set([value]));
-gui.addNumericInput("visMultiplier", true, "Vis mult", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => uni.values.visMultiplier.set([value]));
+gui.addNumericInput("visMultiplier", true, "Contrast", { min: 0.1, max: 10, step: 0.1, val: 1, float: 1 }, "rendering", (value) => uni.values.visMultiplier.set([value]));
 
 gui.addGroup("graphs", "Graphs");
 const lineGraphCtx = gui.addCanvas("graphCanvas", "Aero force, C<sub><i>l</i></sub>, C<sub><i>d</i></sub>", {
