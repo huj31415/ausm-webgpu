@@ -130,10 +130,10 @@ texture-formats-tier1: ${textureTier1}
   });
   storage.maxWaveSpeed = device.createBuffer({
     size: 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.UNIFORM,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.UNIFORM, // | GPUBufferUsage.COPY_DST
     label: "maxWaveSpeed buffer"
   });
-  device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
+  // device.queue.writeBuffer(storage.maxWaveSpeed, 0, new Float32Array([23000]));
 
   storage.forceValues = device.createBuffer({
     size: simulationDomain[0] * 4 * 2, // vec2f per boundary segment
@@ -645,6 +645,11 @@ texture-formats-tier1: ${textureTier1}
       { texture: storage.state2 },
       totalCellCount
     );
+    // update visualization for initial state and run CFL calculation before sim runs
+    const postPass = encoder.beginComputePass();
+    createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
+    createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
+    postPass.end();
     device.queue.submit([encoder.finish()]);
     actualInflowVel = 0;
   }
@@ -734,8 +739,8 @@ texture-formats-tier1: ${textureTier1}
     const encoder = device.createCommandEncoder();
 
     // simulate
-    const computePass = computeTimingHelper.beginComputePass(encoder);
     if (run) {
+      const computePass = computeTimingHelper.beginComputePass(encoder);
       for (let i = 0; i < stepsPerFrame; i++) {
         // state2 -> state0 (Qn)
         createComputePass(computePass, boundaryComputePipeline, boundaryBindGroups[0], totalDispatchSize);
@@ -771,20 +776,21 @@ texture-formats-tier1: ${textureTier1}
         createComputePass(computePass, integrationStage3ComputePipeline, integrationStage3BindGroup, simulationDomainDispatchSize);
       }
       // update inflow velocity, will be 1 frame behind
-      actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength * stepsPerFrame / 50);
+      actualInflowVel += (inflowVel - actualInflowVel) / (velRampUpStrength / stepsPerFrame * 50);
       const inflowFinal = [actualInflowVel * xyAoA[0], actualInflowVel * xyAoA[1]];
       uni.values.inflowV.set(inflowFinal);
       // compute inflow state
       const rhoE = inPressure / (gamma - 1.0) + 0.5 * (actualInflowVel * actualInflowVel) * inRho;
       uni.values.inState.set([inRho, inflowFinal[0] * inRho, inflowFinal[1] * inRho, rhoE]);
-    } // else { computeTime = 0; }
-    computePass.end();
-    cflReader.recordCopy(encoder, storage.maxWaveSpeed);
 
-    const postPass = postprocessingTimingHelper.beginComputePass(encoder);
-    createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
-    createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
-    postPass.end();
+      computePass.end();
+      cflReader.recordCopy(encoder, storage.maxWaveSpeed);
+
+      const postPass = postprocessingTimingHelper.beginComputePass(encoder);
+      createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
+      createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
+      postPass.end();
+    } // else { computeTime = 0; }
 
     renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
     const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
@@ -812,18 +818,22 @@ texture-formats-tier1: ${textureTier1}
 
     device.queue.submit([encoder.finish()]);
 
-    computeTimingHelper.getResult().then(gpuTime => rawComputeTime = gpuTime);
-    postprocessingTimingHelper.getResult().then(gpuTime => rawPostprocessingTime = gpuTime);
+    if (run) {
+      computeTimingHelper.getResult().then(gpuTime => rawComputeTime = gpuTime);
+      postprocessingTimingHelper.getResult().then(gpuTime => rawPostprocessingTime = gpuTime);
+      forceCalcTimingHelper.getResult().then(gpuTime => rawForceTime = gpuTime);
+      graphTimingHelper.getResult().then(gpuTime => rawGraphTime = gpuTime);
+      computeTime += (rawComputeTime - computeTime) / filterStrength;
+      postprocessingTime += (rawPostprocessingTime - postprocessingTime) / filterStrength;
+      forceTime += (rawForceTime - forceTime) / filterStrength;
+      graphTime += (rawGraphTime - graphTime) / filterStrength;
+      gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
+    } else {
+      computeTime = postprocessingTime = forceTime = graphTime = 0;
+    }
     renderTimingHelper.getResult().then(gpuTime => rawRenderTime = gpuTime);
-    forceCalcTimingHelper.getResult().then(gpuTime => rawForceTime = gpuTime);
-    graphTimingHelper.getResult().then(gpuTime => rawGraphTime = gpuTime);
-    computeTime += (rawComputeTime - computeTime) / filterStrength;
-    postprocessingTime += (rawPostprocessingTime - postprocessingTime) / filterStrength;
     renderTime += (rawRenderTime - renderTime) / filterStrength;
-    forceTime += (rawForceTime - forceTime) / filterStrength;
-    graphTime += (rawGraphTime - graphTime) / filterStrength;
 
-    gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
 
     jsTime += (performance.now() - startTime - jsTime) / filterStrength;
 
@@ -842,6 +852,7 @@ texture-formats-tier1: ${textureTier1}
     gui.io.stepsPerFrame(stepsPerFrame);
     gui.io.forceTime(forceTime / 1e3);
     gui.io.graphTime(graphTime / 1e3);
+    // read CFL value from GPU and cast to float
     const max = await cflReader.readLatest();
     const buffer = new ArrayBuffer(4);
     const intView = new Uint32Array(buffer);
