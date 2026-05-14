@@ -790,7 +790,11 @@ texture-formats-tier1: ${textureTier1}
       createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
       createComputePass(postPass, cflReductionComputePipeline, cflReductionBindGroup, [Math.ceil(simulationDomain[0] * simulationDomain[1] / 256)]);
       postPass.end();
-    } // else { computeTime = 0; }
+    } else {
+      const postPass = postprocessingTimingHelper.beginComputePass(encoder);
+      createComputePass(postPass, visualizationComputePipeline, visualizationBindGroup, wgDispatchSize(simulationDomain));
+      postPass.end();
+    }
 
     renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
     const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
@@ -820,17 +824,17 @@ texture-formats-tier1: ${textureTier1}
 
     if (run) {
       computeTimingHelper.getResult().then(gpuTime => rawComputeTime = gpuTime);
-      postprocessingTimingHelper.getResult().then(gpuTime => rawPostprocessingTime = gpuTime);
       forceCalcTimingHelper.getResult().then(gpuTime => rawForceTime = gpuTime);
       graphTimingHelper.getResult().then(gpuTime => rawGraphTime = gpuTime);
       computeTime += (rawComputeTime - computeTime) / filterStrength;
-      postprocessingTime += (rawPostprocessingTime - postprocessingTime) / filterStrength;
       forceTime += (rawForceTime - forceTime) / filterStrength;
       graphTime += (rawGraphTime - graphTime) / filterStrength;
       gui.io.mach(actualInflowVel / Math.sqrt(gamma * inPressure / inRho));
     } else {
-      computeTime = postprocessingTime = forceTime = graphTime = 0;
+      computeTime = forceTime = graphTime = 0;
     }
+    postprocessingTimingHelper.getResult().then(gpuTime => rawPostprocessingTime = gpuTime);
+    postprocessingTime += (rawPostprocessingTime - postprocessingTime) / filterStrength;
     renderTimingHelper.getResult().then(gpuTime => rawRenderTime = gpuTime);
     renderTime += (rawRenderTime - renderTime) / filterStrength;
 
